@@ -42,7 +42,7 @@ Multiple scripts are available to run within this project. The primary script is
 - **Error Reports**: Some errors are handled in the code, other kinds of errors can be checked for with a couple of forthcoming tools that can be run separately.
 
 ## License
-This project is licensed under the GNU License 3.0
+This project is licensed under the GNU License 3.0. See the LICENSE file for more information.
 
 ## Contact
 For questions or support, please contact mykle.law@gmail.com
