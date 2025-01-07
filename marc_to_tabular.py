@@ -8,21 +8,22 @@ from data_transformation import (
 )
 
 def create_selection_dialog(fields):
+    """
+    Creates a selection dialog for the user to input field codes to drop.
+
+    Parameters:
+    - fields: A list of field codes to choose from.
+
+    Returns:
+    - A list of selected field codes to drop.
+    """
     root = tk.Tk()
     root.withdraw()  # Hide the root window
 
     # Categorize fields based on their first digit
     categories = {
-        '0': [],
-        '1': [],
-        '2': [],
-        '3': [],
-        '4': [],
-        '5': [],
-        '6': [],
-        '7': [],
-        '8': [],
-        '9': []
+        '0': [], '1': [], '2': [], '3': [], '4': [],
+        '5': [], '6': [], '7': [], '8': [], '9': []
     }
 
     for field in fields:
@@ -31,6 +32,14 @@ def create_selection_dialog(fields):
         else:
             first_digit = field[0]
             categories[first_digit].append(field)
+
+    for section in categories:
+        categories[section].sort()
+        
+    # Ensure 'LDR' is at the beginning of the '0' list
+    if 'LDR' in categories['0']:
+        categories['0'].remove('LDR')
+        categories['0'].insert(0, 'LDR')
 
     # Create the prompt text
     prompt_text = "Enter the field codes to drop (comma-separated) from the following list:\n"
@@ -51,43 +60,53 @@ def create_selection_dialog(fields):
     else:
         print("No fields selected to drop.")
         return []
+
 # Example Usage:
 print("Starting the script...")
 
-marc_file_path = select_file("MARC", "*.mrc")  # Provide path to your MARC file
-print(f"Selected MARC file: {marc_file_path}")
+try:
+    # Select MARC file
+    marc_file_path = select_file()  # Provide path to your MARC file
+    print(f"Selected MARC file: {marc_file_path}")
 
-df = pd.DataFrame()  # Replace with your actual DataFrame
+    df = pd.DataFrame()  # Replace with your actual DataFrame
 
-# Extract the field codes from the MARC file to populate the rules list
-print("Extracting field codes from the MARC file...")
-fields = extract_field_codes(marc_file_path)
-print(f"Extracted field codes: {fields}")
+    # Extract the field codes from the MARC file to populate the rules list
+    print("Extracting field codes from the MARC file...")
+    fields = extract_field_codes(marc_file_path)
+    print(f"Extracted field codes: {fields}")
 
-# Call function to create selection dialog for fields to drop
-print("Creating selection dialog for fields to drop...")
-fields_to_drop = create_selection_dialog(fields)
+    # Call function to create selection dialog for fields to drop
+    print("Creating selection dialog for fields to drop...")
+    fields_to_drop = create_selection_dialog(fields)
 
-# Filter records based on repetition limit
-max_repeats = 15  # Set your desired maximum repeats
-print(f"Filtering records with max repeats set to {max_repeats}...")
-filtered_records, dropped_records_001 = filter_records(marc_file_path, max_repeats)
-print(f"Filtered records count: {len(filtered_records)}")
-print(f"Dropped records count: {len(dropped_records_001)}")
+    # Filter records based on repetition limit
+    max_repeats = 15  # Set your desired maximum repeats
+    print(f"Filtering records with max repeats set to {max_repeats}...")
+    filtered_records, dropped_records_001 = filter_records(marc_file_path, max_repeats)
+    print(f"Filtered records count: {len(filtered_records)}")
+    print(f"Dropped records count: {len(dropped_records_001)}")
 
-# Save dropped records' 001 fields to a text file
-output_file = "dropped_records.txt"
-print(f"Saving dropped records' 001 fields to {output_file}...")
-save_dropped_records(dropped_records_001, output_file)
+    # Save dropped records' 001 fields to a text file
+    output_file = "dropped_records.txt"
+    print(f"Saving dropped records' 001 fields to {output_file}...")
+    save_dropped_records(dropped_records_001, output_file)
 
-# Convert filtered MARC records to DataFrame
-print("Converting filtered MARC records to DataFrame...")
-df = marc_to_dataframe(filtered_records, fields, fields_to_drop)
-print("Conversion to DataFrame completed.")
+    # Convert filtered MARC records to DataFrame
+    print("Converting filtered MARC records to DataFrame...")
+    df = marc_to_dataframe(filtered_records, fields, fields_to_drop)
+    print("Conversion to DataFrame completed.")
 
-# Save DataFrame to XLSX
-print("Saving DataFrame to XLSX...")
-save_to_xlsxwriter_in_chunks(marc_file_path, df)
-print(f"Data saved to {marc_file_path.replace('mrc', 'xlsx')}")
+    # Save DataFrame to XLSX
+    print("Saving DataFrame to XLSX...")
+    save_to_xlsxwriter_in_chunks(marc_file_path, df)
+    print(f"Data saved to {marc_file_path.replace('mrc', 'xlsx')}")
+
+except pymarc.exceptions.ReaderError as e:
+    print(f"ReaderError: Error reading MARC file - {e}")
+except ValueError as e:
+    print(f"ValueError: Issue with data conversion - {e}")
+except Exception as e:
+    print(f"An unexpected error occurred: {e}")
 
 print("Script completed successfully.")

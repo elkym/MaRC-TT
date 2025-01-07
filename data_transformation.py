@@ -14,6 +14,25 @@ def flatten_list(nested_list):
     return flat_list
 
 def generate_column_names(field_name, subfield_code, internal_count, subfield_count):
+    """
+    Generates column names for the DataFrame based on MARC field and subfield information.
+    The column names indicate the repetition of fields and subfields.
+    Example: 041.1.a.1, 041.1.a.2
+    In this example, these are both from the first instance of field 041, but indicate a repetition of subfield a, instance 1 and 2 of subfield a are denoted.
+    
+    Example: 600.1.IND, 600.1.a, 600.1.b, 600.2.IND, 600.2.a, 600.2.b
+    In this example, the 600 field as a whole has been repeated.
+    These columns indicate the indicators and subfield content for subfields a and b for the first and second instance of field 600.
+
+    Parameters:
+    - field_name: The name of the MARC field.
+    - subfield_code: The code of the MARC subfield.
+    - internal_count: The internal count of the field occurrence.
+    - subfield_count: The count of the subfield occurrence.
+
+    Returns:
+    - A string representing the generated column name.
+    """
     if subfield_count > 1:
         return f"{field_name}.{internal_count}.{subfield_code.strip('$')}.{subfield_count}"
     else:
@@ -51,6 +70,17 @@ def sort_columns(columns):
     return sorted(columns, key=sort_key)
 
 def extract_indicators(record, field_name, field_occurrence):
+    """
+    Extracts indicators from non-control MARC fields and returns them as a dictionary.
+
+    Parameters:
+    - record: The MARC record object.
+    - field_name: The name of the MARC field.
+    - field_occurrence: The occurrence count of the field.
+
+    Returns:
+    - A dictionary containing indicator data with column names as keys and indicator values as values.
+    """
     indicator_data = {}
     control_fields = ['LDR', '001', '005', '006', '007', '008']
     if field_name not in control_fields:
@@ -66,140 +96,187 @@ def extract_indicators(record, field_name, field_occurrence):
 def filter_records(marc_file_path, max_repeats):
     filtered_records = []
     dropped_records_001 = []
-    with open(marc_file_path, 'rb') as fh:
-        records = pymarc.MARCReader(fh)
-        for record in records:
-            drop_record = False
-            for field in record.fields:
-                if has_excessive_repeats(record, field.tag, max_repeats):
-                    drop_record = True
-                    break
-            if drop_record:
-                field_001 = record['001'].value() if record['001'] else 'No 001 Field'
-                dropped_records_001.append(field_001)
-            else:
-                filtered_records.append(record)
+    try:
+        with open(marc_file_path, 'rb') as fh:
+            records = pymarc.MARCReader(fh)
+            for record in records:
+                drop_record = False
+                for field in record.fields:
+                    if has_excessive_repeats(record, field.tag, max_repeats):
+                        drop_record = True
+                        break
+                if drop_record:
+                    field_001 = record['001'].value() if record['001'] else 'No 001 Field'
+                    dropped_records_001.append(field_001)
+                else:
+                    filtered_records.append(record)
+    except FileNotFoundError:
+        print(f"File not found: {marc_file_path}")
+    except pymarc.exceptions.ReaderError as e:
+        print(f"Error reading MARC file: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
     return filtered_records, dropped_records_001
 
 def marc_to_dataframe(filtered_records, rules, fields_to_drop):
+    """
+    Converts MARC records to a pandas DataFrame.
+
+    Parameters:
+    - filtered_records: A list of filtered MARC records.
+    - rules: A dictionary containing rules for processing fields.
+    - fields_to_drop: A list of fields to be dropped from the DataFrame.
+
+    Returns:
+    - A pandas DataFrame containing the transformed MARC records.
+    """
     flattened_data = []
-    for record in filtered_records:
-        internal_record_count = {}
-        row_data = {}
-        row_data['LDR.1'] = str(record.leader)
-        for field in record.fields:
-            field_name = str(field.tag)
-            if field_name not in rules or field_name in fields_to_drop:
-                continue
-            if field_name not in internal_record_count:
-                internal_record_count[field_name] = 0
-            internal_record_count[field_name] += 1
-            field_occurrence = internal_record_count[field_name]
-            subfield_counts = {}
-            indicator_data = extract_indicators(record, field_name, field_occurrence)
-            row_data.update(indicator_data)
-            if field.subfields:
-                for subfield in field.subfields:
-                    subfield_code = f"${subfield[0]}"
-                    subfield_value = escape_line_breaks(subfield[1])
-                    if subfield_code not in subfield_counts:
-                        subfield_counts[subfield_code] = 0
-                    subfield_counts[subfield_code] += 1
-                    subfield_occurrence = subfield_counts[subfield_code]
-                    column_name = generate_column_names(field_name, subfield_code, field_occurrence, subfield_occurrence)
-                    row_data[column_name] = subfield_value
-            else:
-                field_value = escape_line_breaks(field.data)
-                column_name = generate_column_names(field_name, '', field_occurrence, 1)
-                row_data[column_name] = field_value
-        flattened_data.append(row_data)
-    df = pd.DataFrame(flattened_data)
-    sorted_columns = sort_columns(df.columns)
-    df = df[sorted_columns]
+    try:
+        for record in filtered_records:
+            internal_record_count = {}
+            row_data = {}
+            row_data['LDR.1'] = str(record.leader)
+            for field in record.fields:
+                field_name = str(field.tag)
+                if field_name not in rules or field_name in fields_to_drop:
+                    continue
+                if field_name not in internal_record_count:
+                    internal_record_count[field_name] = 0
+                internal_record_count[field_name] += 1
+                field_occurrence = internal_record_count[field_name]
+                subfield_counts = {}
+                indicator_data = extract_indicators(record, field_name, field_occurrence)
+                row_data.update(indicator_data)
+                if field.subfields:
+                    for subfield in field.subfields:
+                        subfield_code = f"${subfield[0]}"
+                        subfield_value = escape_line_breaks(subfield[1])
+                        if subfield_code not in subfield_counts:
+                            subfield_counts[subfield_code] = 0
+                        subfield_counts[subfield_code] += 1
+                        subfield_occurrence = subfield_counts[subfield_code]
+                        column_name = generate_column_names(field_name, subfield_code, field_occurrence, subfield_occurrence)
+                        row_data[column_name] = subfield_value
+                else:
+                    field_value = escape_line_breaks(field.data)
+                    column_name = generate_column_names(field_name, '', field_occurrence, 1)
+                    row_data[column_name] = field_value
+            flattened_data.append(row_data)
+        
+        # Create DataFrame and sort columns
+        df = pd.DataFrame(flattened_data)
+        sorted_columns = sort_columns(df.columns)
+        df = df[sorted_columns]
+
+        # Ensure all DataFrame values are strings
+        df = df.applymap(str)
+
+    except ValueError as e:
+        print(f"ValueError: Issue with data conversion - {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+    
     return df
 
 def custom_write(worksheet, row, col, value, column_name, field_001, log_file):
+    """
+    Writes a value to an Excel worksheet cell and logs NaN values.
+    This function was developed to help determine how various NaN values are being handled by the script-- as some fields in MaRC data are customized for specific systems:
+    these may include values (particularly in the 9XX MaRC fields) that may be interpreted as NaN, yet need to be preserved instead of converted to empty strings.
+    (The pandas function pd.isna() doesn't always act as expected.)
+
+    Parameters:
+    - worksheet: The Excel worksheet object.
+    - row: The row number where the value should be written.
+    - col: The column number where the value should be written.
+    - value: The value to be written to the cell.
+    - column_name: The name of the column (used for logging).
+    - field_001: The 001 field value (used for logging).
+    - log_file: The file object for logging NaN values.
+    """
+    # Check if the value is NaN (Not a Number)
     if pd.isna(value):
+        # If the value is not an empty string, log the NaN occurrence
         if value != '':
             log_file.write(f"NaN encountered at row {row}, col {col} (Column: {column_name}, 001 Field: {field_001}). Data type: {type(value)}, Data representation: {repr(value)}\n")
+        # Write an empty string to the cell
         worksheet.write(row, col, '')
     else:
+        # Write the actual value to the cell
         worksheet.write(row, col, value)
 
 def save_to_xlsxwriter_in_chunks(marc_file_path, df, chunk_size=1000):
-    """
-    Saves the DataFrame to an XLSX file in chunks, using the original MARC file name with .xlsx extension.
-    
-    Parameters:
-    - marc_file_path: Path to the original MARC file.
-    - df: The DataFrame containing the data to be saved.
-    - chunk_size: The number of rows to write in each chunk (default is 1000).
-    """
-    # Define default widths
-    standard_width = 17
-    ind_width = 6.5
+    try:
+        # Define default widths
+        standard_width = 17
+        ind_width = 6.5
 
-    # Generate the output file path by replacing the .mrc extension with .xlsx
-    output_file_path = marc_file_path.replace(".mrc", ".xlsx")
-    # Create an Excel writer object using xlsxwriter as the engine
-    writer = pd.ExcelWriter(output_file_path, engine='xlsxwriter')
-    # Get the workbook and add a worksheet
-    workbook = writer.book
-    # workbook.use_zip64()
-    workbook.strings_to_urls = False
-    worksheet = workbook.add_worksheet()
+        # Generate the output file path by replacing the .mrc extension with .xlsx
+        output_file_path = marc_file_path.replace(".mrc", ".xlsx")
+        # Create an Excel writer object using xlsxwriter as the engine
+        writer = pd.ExcelWriter(output_file_path, engine='xlsxwriter')
+        # Get the workbook and add a worksheet
+        workbook = writer.book
+        workbook.strings_to_urls = False
+        worksheet = workbook.add_worksheet()
 
-    # Open a log file for writing error messages
-    with open("error_log.txt", "w") as log_file:
-        # Write the header row with column names
-        for col_num, value in enumerate(df.columns.values):
-            worksheet.write(0, col_num, value)
-            if "IND" in value:
-                worksheet.set_column(col_num, col_num, ind_width)
+        # Open a log file for writing error messages
+        with open("error_log.txt", "w") as log_file:
+            # Write the header row with column names
+            for col_num, value in enumerate(df.columns.values):
+                worksheet.write(0, col_num, value)
+                if "IND" in value:
+                    worksheet.set_column(col_num, col_num, ind_width)
+                else:
+                    worksheet.set_column(col_num, col_num, standard_width)
+
+            # Initialize the row number for writing data
+            row_num = 1
+
+            # Define the wrap format with text wrapping enabled
+            wrap_format = workbook.add_format({'text_wrap': True})
+
+            # Check if the '001.1' column exists
+            if '001.1' in df.columns:
+                field_001_index = df.columns.get_loc('001.1')
             else:
-                worksheet.set_column(col_num, col_num, standard_width)
+                field_001_index = None
 
-        # Initialize the row number for writing data
-        row_num = 1
+            # Write data in chunks to avoid memory issues
+            for start_row in range(0, len(df), chunk_size):
+                end_row = min(start_row + chunk_size, len(df))
+                chunk = df.iloc[start_row:end_row]
+                for r in chunk.itertuples(index=False, name=None):
+                    # Extract the correct 001 field value if the column exists
+                    field_001 = r[field_001_index] if field_001_index is not None else 'N/A'
+                    max_row_height = 1  # Initialize max row height to 1 line
 
-        # Define the wrap format with text wrapping enabled
-        wrap_format = workbook.add_format({'text_wrap': True})
+                    for col_num, cell_value in enumerate(r):
+                        cell_value_str = str(cell_value)
 
-        # Check if the '001.1' column exists
-        if '001.1' in df.columns:
-            field_001_index = df.columns.get_loc('001.1')
-        else:
-            field_001_index = None
+                        # Count number of lines based on newline characters and set row height accordingly
+                        line_count = cell_value_str.count('\n') + 1
+                        max_row_height = max(max_row_height, line_count)
 
-        # Write data in chunks to avoid memory issues
-        for start_row in range(0, len(df), chunk_size):
-            end_row = min(start_row + chunk_size, len(df))
-            chunk = df.iloc[start_row:end_row]
-            for r in chunk.itertuples(index=False, name=None):
-                # Extract the correct 001 field value if the column exists
-                field_001 = r[field_001_index] if field_001_index is not None else 'N/A'
-                max_row_height = 1  # Initialize max row height to 1 line
+                        # Check if the cell value is NaN and skip writing if it is
+                        if pd.isna(cell_value):
+                            continue
 
-                for col_num, cell_value in enumerate(r):
-                    cell_value_str = str(cell_value)
+                        worksheet.write(row_num, col_num, cell_value_str, wrap_format)
 
-                    # Count number of lines based on newline characters and set row height accordingly
-                    line_count = cell_value_str.count('\n') + 1
-                    max_row_height = max(max_row_height, line_count)
+                        # Use the custom_write function to handle NaN values and log errors
+                        custom_write(worksheet, row_num, col_num, cell_value_str, df.columns[col_num], field_001, log_file)
 
-                    # Check if the cell value is NaN and skip writing if it is
-                    if pd.isna(cell_value):
-                        continue
+                    # Set row height based on max_row_height determined by newline characters
+                    worksheet.set_row(row_num, max_row_height * 15)  # Assuming default line height is 15 points
 
-                    worksheet.write(row_num, col_num, cell_value_str, wrap_format)
+                    row_num += 1
 
-                    # Use the custom_write function to handle NaN values and log errors
-                    custom_write(worksheet, row_num, col_num, cell_value_str, df.columns[col_num], field_001, log_file)
-
-                # Set row height based on max_row_height determined by newline characters
-                worksheet.set_row(row_num, max_row_height * 15)  # Assuming default line height is 15 points
-
-                row_num += 1
-
-    # Close the writer to save the file
-    writer.close()
+        # Close the writer to save the file
+        writer.close()
+    except FileNotFoundError:
+        print(f"File not found: {marc_file_path}")
+    except PermissionError:
+        print(f"Permission denied: Unable to write to {output_file_path}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
