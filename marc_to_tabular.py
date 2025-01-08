@@ -1,22 +1,16 @@
+import os
 import pandas as pd
 import pymarc
 import tkinter as tk
 from tkinter import simpledialog
-from file_handling import select_file, save_dropped_records
+from file_handling import select_file, save_dropped_records, select_folder
 from data_transformation import (
     extract_field_codes, filter_records, marc_to_dataframe, save_to_xlsxwriter_in_chunks
 )
+import config
 
+# Creates a selection dialog for the user to input field codes to drop.
 def create_selection_dialog(fields):
-    """
-    Creates a selection dialog for the user to input field codes to drop.
-
-    Parameters:
-    - fields: A list of field codes to choose from.
-
-    Returns:
-    - A list of selected field codes to drop.
-    """
     root = tk.Tk()
     root.withdraw()  # Hide the root window
 
@@ -49,7 +43,7 @@ def create_selection_dialog(fields):
 
     # Create a dialogue box for inputting field codes
     field_codes_input = simpledialog.askstring(
-        title="Select Fields to Drop",
+        title="Select Fields to Drop:",
         prompt=prompt_text
     )
 
@@ -61,12 +55,15 @@ def create_selection_dialog(fields):
         print("No fields selected to drop.")
         return []
 
-# Example Usage:
 print("Starting the script...")
 
 try:
+    # Select folder
+    folder_path = select_folder()
+    print(f"Selected folder: {folder_path}")
+
     # Select MARC file
-    marc_file_path = select_file()  # Provide path to your MARC file
+    marc_file_path = select_file()
     print(f"Selected MARC file: {marc_file_path}")
 
     df = pd.DataFrame()  # Replace with your actual DataFrame
@@ -80,15 +77,18 @@ try:
     print("Creating selection dialog for fields to drop...")
     fields_to_drop = create_selection_dialog(fields)
 
-    # Filter records based on repetition limit
-    max_repeats = 15  # Set your desired maximum repeats
+    # Filter records based on repetition limit from config file
+    max_repeats = config.MAX_REPEATS  # Use max_repeats from config file
     print(f"Filtering records with max repeats set to {max_repeats}...")
     filtered_records, dropped_records_001 = filter_records(marc_file_path, max_repeats)
     print(f"Filtered records count: {len(filtered_records)}")
     print(f"Dropped records count: {len(dropped_records_001)}")
 
+    # Extract the base name of the MARC file (without extension)
+    base_name = os.path.splitext(os.path.basename(marc_file_path))[0]
+
     # Save dropped records' 001 fields to a text file
-    output_file = "dropped_records.txt"
+    output_file = os.path.join(folder_path, f"{base_name}_dropped_records.txt")
     print(f"Saving dropped records' 001 fields to {output_file}...")
     save_dropped_records(dropped_records_001, output_file)
 
@@ -98,9 +98,10 @@ try:
     print("Conversion to DataFrame completed.")
 
     # Save DataFrame to XLSX
-    print("Saving DataFrame to XLSX...")
-    save_to_xlsxwriter_in_chunks(marc_file_path, df)
-    print(f"Data saved to {marc_file_path.replace('mrc', 'xlsx')}")
+    output_file = os.path.join(folder_path, f"{base_name}_output.xlsx")
+    print(f"Saving DataFrame to {output_file}...")
+    save_to_xlsxwriter_in_chunks(output_file, df)
+    print(f"Data saved to {output_file}")
 
 except pymarc.exceptions.ReaderError as e:
     print(f"ReaderError: Error reading MARC file - {e}")

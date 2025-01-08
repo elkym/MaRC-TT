@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import pymarc
 
@@ -38,7 +39,6 @@ def generate_column_names(field_name, subfield_code, internal_count, subfield_co
     else:
         return f"{field_name}.{internal_count}.{subfield_code.strip('$')}"
 
-# Function to check for excessive repeats of a field
 def has_excessive_repeats(record, field_tag, max_repeats):
     count = sum(1 for field in record.get_fields(field_tag))
     return count > max_repeats
@@ -163,13 +163,11 @@ def marc_to_dataframe(filtered_records, rules, fields_to_drop):
                     row_data[column_name] = field_value
             flattened_data.append(row_data)
         
-        # Create DataFrame and sort columns
         df = pd.DataFrame(flattened_data)
         sorted_columns = sort_columns(df.columns)
         df = df[sorted_columns]
 
-        # Ensure all DataFrame values are strings
-        df = df.applymap(str)
+        df = df.map(str)
 
     except ValueError as e:
         print(f"ValueError: Issue with data conversion - {e}")
@@ -194,35 +192,24 @@ def custom_write(worksheet, row, col, value, column_name, field_001, log_file):
     - field_001: The 001 field value (used for logging).
     - log_file: The file object for logging NaN values.
     """
-    # Check if the value is NaN (Not a Number)
     if pd.isna(value):
-        # If the value is not an empty string, log the NaN occurrence
         if value != '':
             log_file.write(f"NaN encountered at row {row}, col {col} (Column: {column_name}, 001 Field: {field_001}). Data type: {type(value)}, Data representation: {repr(value)}\n")
-        # Write an empty string to the cell
         worksheet.write(row, col, '')
     else:
-        # Write the actual value to the cell
         worksheet.write(row, col, value)
 
-def save_to_xlsxwriter_in_chunks(marc_file_path, df, chunk_size=1000):
+def save_to_xlsxwriter_in_chunks(output_file_path, df, chunk_size=1000):
     try:
-        # Define default widths
         standard_width = 17
         ind_width = 6.5
 
-        # Generate the output file path by replacing the .mrc extension with .xlsx
-        output_file_path = marc_file_path.replace(".mrc", ".xlsx")
-        # Create an Excel writer object using xlsxwriter as the engine
         writer = pd.ExcelWriter(output_file_path, engine='xlsxwriter')
-        # Get the workbook and add a worksheet
         workbook = writer.book
         workbook.strings_to_urls = False
         worksheet = workbook.add_worksheet()
 
-        # Open a log file for writing error messages
         with open("error_log.txt", "w") as log_file:
-            # Write the header row with column names
             for col_num, value in enumerate(df.columns.values):
                 worksheet.write(0, col_num, value)
                 if "IND" in value:
@@ -230,52 +217,39 @@ def save_to_xlsxwriter_in_chunks(marc_file_path, df, chunk_size=1000):
                 else:
                     worksheet.set_column(col_num, col_num, standard_width)
 
-            # Initialize the row number for writing data
             row_num = 1
-
-            # Define the wrap format with text wrapping enabled
             wrap_format = workbook.add_format({'text_wrap': True})
 
-            # Check if the '001.1' column exists
             if '001.1' in df.columns:
                 field_001_index = df.columns.get_loc('001.1')
             else:
                 field_001_index = None
 
-            # Write data in chunks to avoid memory issues
             for start_row in range(0, len(df), chunk_size):
                 end_row = min(start_row + chunk_size, len(df))
                 chunk = df.iloc[start_row:end_row]
                 for r in chunk.itertuples(index=False, name=None):
-                    # Extract the correct 001 field value if the column exists
                     field_001 = r[field_001_index] if field_001_index is not None else 'N/A'
-                    max_row_height = 1  # Initialize max row height to 1 line
+                    max_row_height = 1
 
                     for col_num, cell_value in enumerate(r):
                         cell_value_str = str(cell_value)
-
-                        # Count number of lines based on newline characters and set row height accordingly
                         line_count = cell_value_str.count('\n') + 1
                         max_row_height = max(max_row_height, line_count)
 
-                        # Check if the cell value is NaN and skip writing if it is
                         if pd.isna(cell_value):
                             continue
 
                         worksheet.write(row_num, col_num, cell_value_str, wrap_format)
-
-                        # Use the custom_write function to handle NaN values and log errors
                         custom_write(worksheet, row_num, col_num, cell_value_str, df.columns[col_num], field_001, log_file)
 
-                    # Set row height based on max_row_height determined by newline characters
-                    worksheet.set_row(row_num, max_row_height * 15)  # Assuming default line height is 15 points
+                    worksheet.set_row(row_num, max_row_height * 15)
 
                     row_num += 1
 
-        # Close the writer to save the file
         writer.close()
     except FileNotFoundError:
-        print(f"File not found: {marc_file_path}")
+        print(f"File not found: {output_file_path}")
     except PermissionError:
         print(f"Permission denied: Unable to write to {output_file_path}")
     except Exception as e:
