@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import tkinter as tk
-from file_handling import select_file, select_folder
+from file_handling import select_file_to_open, select_folder
 from datetime import datetime
 import config
 import pymarc
@@ -39,10 +39,10 @@ def get_last_modified_time(file_path):
 # Main script
 try:
     # Select MARC file
-    mrc_file_path = select_file("*.mrc")
+    mrc_file_path = select_file_to_open("*.mrc")
 
     # Select Tabular file
-    xlsx_file_path = select_file("*.xlsx", "*.parquet")
+    xlsx_file_path = select_file_to_open("*.xlsx", "*.parquet")
 
     marc_last_modified = get_last_modified_time(mrc_file_path)
     xlsx_last_modified = get_last_modified_time(xlsx_file_path)

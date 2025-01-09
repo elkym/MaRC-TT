@@ -1,4 +1,5 @@
-from file_handling import select_file, select_folder
+from file_handling import select_file_to_open, select_file_to_save, select_folder
+import config
 
 def test_select_folder():
     try:
@@ -7,16 +8,26 @@ def test_select_folder():
     except FileNotFoundError as e:
         print(e)
 
-def test_select_file():
+def test_select_file_to_open():
     try:
-        file_path = select_file()
-        print(f"Selected file: {file_path}")
+        file_path = select_file_to_open("*.xlsx")
+        print(f"Selected file to open: {file_path}")
     except FileNotFoundError as e:
         print(e)
 
-if __name__ == "__main__":
-    print("Testing folder selection...")
-    test_select_folder()
-    
-    print("\nTesting file selection...")
-    test_select_file()
+def test_select_file_to_save():
+    try:
+        file_path = select_file_to_save("*.mrc", default_name="example.mrc")
+        print(f"Selected file to save: {file_path}")
+    except FileNotFoundError as e:
+        print(e)
+
+# Directly call the test functions
+print("Testing folder selection...")
+test_select_folder()
+
+print("\nTesting file selection to open...")
+test_select_file_to_open()
+
+print("\nTesting file selection to save...")
+test_select_file_to_save()

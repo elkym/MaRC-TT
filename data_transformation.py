@@ -53,20 +53,21 @@ def extract_field_codes(marc_file_path):
                 field_codes.add(str(field.tag))
     return list(field_codes)
 
+def sort_key(column_name):
+    parts = column_name.split('.')
+    if parts[0] == 'LDR':
+        field_tag = -1
+        field_occurrence = 1
+        subfield_code = ''
+        subfield_occurrence = 0
+    else:
+        field_tag = int(parts[0])
+        field_occurrence = int(parts[1])
+        subfield_code = parts[2] if len(parts) > 2 else ''
+        subfield_occurrence = int(parts[3]) if len(parts) > 3 else 0
+    return (field_tag, field_occurrence, subfield_code, subfield_occurrence)
+
 def sort_columns(columns):
-    def sort_key(column_name):
-        parts = column_name.split('.')
-        if parts[0] == 'LDR':
-            field_tag = -1
-            field_occurrence = 1
-            subfield_code = ''
-            subfield_occurrence = 0
-        else:
-            field_tag = int(parts[0])
-            field_occurrence = int(parts[1])
-            subfield_code = parts[2] if len(parts) > 2 else ''
-            subfield_occurrence = int(parts[3]) if len(parts) > 3 else 0
-        return (field_tag, field_occurrence, subfield_code, subfield_occurrence)
     return sorted(columns, key=sort_key)
 
 def extract_indicators(record, field_name, field_occurrence):
@@ -167,7 +168,9 @@ def marc_to_dataframe(filtered_records, rules, fields_to_drop):
         sorted_columns = sort_columns(df.columns)
         df = df[sorted_columns]
 
-        df = df.map(str)
+        # Convert NaN values to empty strings unless they are 'N/A'
+        df.fillna('', inplace=True)
+        df.replace('nan', '', inplace=True)
 
     except ValueError as e:
         print(f"ValueError: Issue with data conversion - {e}")

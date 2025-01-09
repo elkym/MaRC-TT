@@ -3,11 +3,13 @@ import pandas as pd
 import pymarc
 import tkinter as tk
 from tkinter import simpledialog
-from file_handling import select_file, save_dropped_records, select_folder
+from file_handling import select_file_to_open, save_dropped_records, select_folder
 from data_transformation import (
     extract_field_codes, filter_records, marc_to_dataframe, save_to_xlsxwriter_in_chunks
 )
 import config
+import os
+from datetime import datetime
 
 # Creates a selection dialog for the user to input field codes to drop.
 def create_selection_dialog(fields):
@@ -63,10 +65,8 @@ try:
     print(f"Selected folder: {folder_path}")
 
     # Select MARC file
-    marc_file_path = select_file()
+    marc_file_path = select_file_to_open("*.mrc")
     print(f"Selected MARC file: {marc_file_path}")
-
-    df = pd.DataFrame()  # Replace with your actual DataFrame
 
     # Extract the field codes from the MARC file to populate the rules list
     print("Extracting field codes from the MARC file...")
@@ -92,13 +92,21 @@ try:
     print(f"Saving dropped records' 001 fields to {output_file}...")
     save_dropped_records(dropped_records_001, output_file)
 
+    df = pd.DataFrame()  # Replace with your actual DataFrame
+
     # Convert filtered MARC records to DataFrame
     print("Converting filtered MARC records to DataFrame...")
     df = marc_to_dataframe(filtered_records, fields, fields_to_drop)
     print("Conversion to DataFrame completed.")
 
-    # Save DataFrame to XLSX
-    output_file = os.path.join(folder_path, f"{base_name}_output.xlsx")
+    # Extract the base name of the MARC file (without extension)
+    base_name = os.path.splitext(os.path.basename(marc_file_path))[0]
+
+    # Get the current date and time
+    current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Save DataFrame to XLSX with date and time in the file name
+    output_file = os.path.join(folder_path, f"{base_name}_{current_datetime}.xlsx")
     print(f"Saving DataFrame to {output_file}...")
     save_to_xlsxwriter_in_chunks(output_file, df)
     print(f"Data saved to {output_file}")
