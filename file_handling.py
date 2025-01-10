@@ -18,7 +18,8 @@ def select_file_to_open(*file_extensions):
             ("Excel files", "*.xlsx"),
             ("TSV files", "*.tsv"),
             ("Text files", "*.txt"),
-            ("Parquet files", "*.parquet")
+            ("Parquet files", "*.parquet"),
+            ("CSV files", "*.csv")
         ]
     else:
         file_extensions = [(f"{ext} files", ext) for ext in file_extensions]
@@ -50,7 +51,8 @@ def select_file_to_save(*file_extensions, default_name=None):
             ("Excel files", "*.xlsx"),
             ("TSV files", "*.tsv"),
             ("Text files", "*.txt"),
-            ("Parquet files", "*.parquet")
+            ("Parquet files", "*.parquet"),
+            ("CSV files", "*.csv")
         ]
     else:
         file_extensions = [(f"{ext} files", ext) for ext in file_extensions]
