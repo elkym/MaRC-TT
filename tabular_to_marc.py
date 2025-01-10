@@ -4,6 +4,7 @@ from datetime import datetime
 import pandas as pd
 from pymarc import Record, Field
 from file_handling import select_file_to_open, select_file_to_save
+from tqdm import tqdm
 
 # Set up logging
 logging.basicConfig(filename='NA_error_log.txt', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -16,7 +17,7 @@ print("Origin file selected:", origin_file)
 
 # Generate default destination file name
 base_name = os.path.splitext(os.path.basename(origin_file))[0]
-current_date = datetime.now().strftime("%m%d")
+current_date = datetime.now().strftime("%Y%m%d-%I%M-%p")
 default_destination_name = f"{base_name}_{current_date}.mrc"
 
 destination_file = select_file_to_save("*.mrc", default_name=default_destination_name)
@@ -25,16 +26,39 @@ if not destination_file:
     exit()
 print("Destination file selected:", destination_file)
 
+# Helper function to check for the presence of all required control fields
+def check_control_fields_presence(df, control_fields):
+    """
+    Check if all required control fields are present in the DataFrame.
+    
+    Args:
+        df (pd.DataFrame): The DataFrame containing the data.
+        control_fields (list): A list of required control fields.
+    
+    Returns:
+        bool: True if all control fields are present, False otherwise.
+        list: A list of missing control fields.
+    """
+    missing_fields = [field for field in control_fields if field not in df.columns]
+    if missing_fields:
+        print(f"Warning: The following control fields are missing: {', '.join(missing_fields)}")
+        return False, missing_fields
+    else:
+        print("All required control fields are present.")
+        return True, []
+
+# List of control fields including LDR
+control_fields = ['LDR', '001', '003', '005', '006', '007', '008']
+
 # Try-except block to handle potential exceptions when reading the Excel file
 try:
     # Read data from Excel with all columns specified as strings and 'N/A' treated as a string
     df = pd.read_excel(origin_file, dtype=str, na_values=['', 'NaN', 'null'])
-    # Replace NaN values with 'N/A' in the specific column
-    df['952.1.c'].fillna('N/A', inplace=True)
-    # Debugging print statement
-    if '952.1.c' in df.columns:
-        print(f"Data type of '952.1.c': {df['952.1.c'].dtype}")
-        print(f"Data in '952.1.c':\n{df['952.1.c'].head()}")
+    tqdm.pandas(desc="Reading Excel file")
+    df['952.1.c'] = df['952.1.c'].fillna('N/A')
+    
+    # Check for the presence of all required control fields
+    all_fields_present, missing_fields = check_control_fields_presence(df, control_fields)
 except FileNotFoundError:
     print(f"Error: The file {origin_file} was not found. Please select a valid file.")
     exit()
@@ -113,9 +137,6 @@ def validate_header(header, control_fields):
     
     return True, ""
 
-# List of control fields
-control_fields = ['LDR', '001', '003', '005', '006', '007', '008']
-
 # Validate all headers before processing
 for column_name in df.columns:
     is_valid, error_message = validate_header(column_name, control_fields)
@@ -186,7 +207,7 @@ def handle_control_fields(fields, field, data):
 def handle_variable_fields(fields, field, occurrence, subfield, subfield_occurrence, data, row, column_name):
     """
     Handle variable fields and set indicators or add subfields as needed.
-    
+
     Args:
         fields (dict): The dictionary of fields.
         field (str): The field code.
@@ -211,13 +232,8 @@ def handle_variable_fields(fields, field, occurrence, subfield, subfield_occurre
             indicators=[indicators[0], indicators[1]],
             subfields=fields[key]['field_obj'].subfields
         )
-    
     elif subfield:
         if not pd.isna(data) or data == 'N/A':
-            # Debugging print statement
-            if field == '952' and subfield == 'c':
-                print(f"Original data type of '952.c': {type(data)}")
-                print(f"Original data in '952.c': {data}")
             data = str(data)
             record_id = row['001'] if '001' in row else 'Unknown'
             logging.debug(f"Adding subfield: {subfield} with data: '{data}' for record ID: {record_id} in field: {field}")
@@ -237,11 +253,11 @@ def process_row(row):
     """
     record = Record()
     fields_dict = {}
-    
+
     # Iterate over each column header in the DataFrame
     for header in df.columns:
         field, occurrence, subfield, subfield_occurrence = parse_header(header)
-        
+
         # Handle control fields separately
         if field in ['001', '005', '006', '007', '008']:
             handle_control_fields(fields_dict, field, row[header])
@@ -250,20 +266,17 @@ def process_row(row):
             if subfield == '':
                 continue
             current_subfield_data = row[header]
-            if field == '952' and subfield == 'c':
-                print(f"Processing '952.c': {current_subfield_data}")
             handle_variable_fields(fields_dict, field, occurrence, subfield, subfield_occurrence, current_subfield_data, row, header)
-    
+
     # Add all processed fields to the MARC record
     for field_info in fields_dict.values():
         if field_info['subfield_data_present']:
             record.add_field(field_info['field_obj'])
-    
+
     return record
 
 # Create a list to hold MARC records by processing each row of the DataFrame
-records = [process_row(row) for index, row in df.iterrows()]
-print("All rows processed into MARC records.")
+marc_records = [process_row(row) for index, row in tqdm(df.iterrows(), total=df.shape[0], desc="Processing rows")]
 
 # Function to write MARC records to a file
 def write_records_to_file(records, destination_file):
@@ -276,7 +289,7 @@ def write_records_to_file(records, destination_file):
     """
     try:
         with open(destination_file, 'wb') as file:
-            for record in records:
+            for record in tqdm(records, desc="Writing records"):
                 for field in record.get_fields('952'):
                     if 'c' in field:
                         print(f"Writing subfield '952.c': {field['c']}")
@@ -286,8 +299,7 @@ def write_records_to_file(records, destination_file):
         print(f"Error writing to file {destination_file}: {e}")
 
 # Write the MARC records to a .mrc file
-write_records_to_file(records, destination_file)
-print("MARC records have been written to", destination_file)
+write_records_to_file(marc_records, destination_file)
 
 # At the end of the script
 if not invalid_records_df.empty:
