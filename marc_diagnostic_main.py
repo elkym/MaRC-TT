@@ -16,11 +16,12 @@ logging.basicConfig(level=logging.DEBUG,
 
 # Define error constants
 ERR_NON_DIGIT_UID = 'ERR001: Non-digit characters in UID'
-ERR_DUPLICATE_CONTROL_FIELD = 'ERR005: Duplicate Control Field'
-ERR_NON_UTF8_ENCODING = 'ERR006: Non-UTF-8 encoding detected in field/subfield'
-ERR_RECORD_NOT_FOUND = 'ERR004: Record not found in Excel'
-ERR_MISSING_UID = 'ERR007: Missing UID in MARC record'
-ERR_EXCESSIVE_FIELD_REPETITIONS = 'ERR008: Excessive Field Repetitions'
+ERR_RECORD_NOT_FOUND = 'ERR002: Record not found in Excel'
+ERR_DUPLICATE_CONTROL_FIELD = 'ERR003: Duplicate Control Field'
+ERR_NON_UTF8_ENCODING = 'ERR004: Non-UTF-8 encoding detected in field/subfield'
+ERR_MISSING_UID = 'ERR005: Missing UID in MARC record'
+ERR_EXCESSIVE_FIELD_REPETITIONS = 'ERR006: Excessive Field Repetitions'
+ERR_CASE_SENSITIVITY_MISMATCH = 'ERR007: Case sensitivity mismatch'
 
 error_entries = []
 
@@ -67,6 +68,15 @@ def check_non_utf8_encoding(value):
     except UnicodeEncodeError:
         return True
     return False
+
+# Function to compare strings with case sensitivity option
+def compare_strings(str1, str2, case_sensitive=True):
+    if str1 is None or str2 is None:
+        return str1 == str2
+    if case_sensitive:
+        return str1 == str2
+    else:
+        return str1.lower() == str2.lower()
 
 # Function to analyze field repetitions and log errors in a dictionary with UID as the key
 def analyze_field_repetitions(marc_records, max_repeats):
@@ -164,9 +174,39 @@ try:
                 error_entries.append(diag_log(row['001.1.'], row['245$a'], ERR_NON_UTF8_ENCODING, "Non-UTF-8 encoding detected", {'Field': col}))
     print(f"Non-UTF-8 encoding check completed. Errors: {len(error_entries)}")
 
-    # Debug: Print error entries after checking non-UTF-8 encoding
-    print(f"Error entries after checking non-UTF-8 encoding: {error_entries[:10]}")  # Print only the first 10 entries
-    logging.debug(f"Error entries after checking non-UTF-8 encoding: {error_entries[:10]}")  # Print only the first 10 entries
+    # Compare strings with case sensitivity option
+    fields_to_compare = {
+        'LDR': 'LDR.1',
+        '003': '003.1.',
+        '008': '008.1.'
+    }
+    case_sensitive = True  # Set this to False if case-insensitive comparison is needed
+
+    # Create hash map for dataframe
+    df_map = {row['001.1.']: row for index, row in df.iterrows()}
+    print("Hash map for dataframe created.")  # Debugging line
+
+    # Iterate over the dictionary items (key-value pairs)
+    for uid, record in marc_records.items():
+        print(f"UID: {uid}")  # Debugging line
+        if uid in df_map:
+            df_row = df_map[uid]
+            ### print(f"Dataframe row: {df_row}")  # Debugging line
+            for marc_field, df_field in fields_to_compare.items():
+                ### print(f"Checking MARC field: {marc_field}")  # Debugging line
+                if marc_field in record:
+                    marc_value = str(record[marc_field].value()) if record[marc_field] else ''
+                else:
+                    marc_value = ''
+                df_value = str(df_row.get(df_field))
+                if not compare_strings(marc_value, df_value, case_sensitive):
+                    error_entries.append(diag_log(uid, df_row['LDR.1'], ERR_CASE_SENSITIVITY_MISMATCH, "Case sensitivity mismatch", {'Field': marc_field}))
+
+    print(f"String comparison with case sensitivity check completed. Errors: {len(error_entries)}")
+
+    # Debug: Print error entries after checking case sensitivity
+    print(f"Error entries after checking case sensitivity: {error_entries[:10]}")  # Print only the first 10 entries
+    logging.debug(f"Error entries after checking case sensitivity: {error_entries[:10]}")
 
     # Convert error entries to a Dask DataFrame
     if error_entries:
