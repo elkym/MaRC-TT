@@ -3,12 +3,9 @@ import pandas as pd
 import pymarc
 import tkinter as tk
 from tkinter import simpledialog
-from file_handling import select_file_to_open, save_dropped_records, select_folder
-from data_transformation import (
-    extract_field_codes, filter_records, marc_to_dataframe, save_to_xlsxwriter_in_chunks
-)
+from file_handling import select_file_to_open, save_dropped_records, select_folder, extract_field_codes, filter_records
+from data_transformation import marc_to_dataframe, save_to_xlsxwriter_in_chunks
 import config
-import os
 from datetime import datetime
 
 # Creates a selection dialog for the user to input field codes to drop.
@@ -29,8 +26,8 @@ def create_selection_dialog(fields):
             first_digit = field[0]
             categories[first_digit].append(field)
 
-    for section in categories:
-        categories[section].sort()
+    for section, items in categories.items():
+        items.sort()
         
     # Ensure 'LDR' is at the beginning of the '0' list
     if 'LDR' in categories['0']:
@@ -60,18 +57,18 @@ def create_selection_dialog(fields):
 print("Starting the script...")
 
 try:
-    # Select folder
-    folder_path = select_folder()
-    print(f"Selected folder: {folder_path}")
-
     # Select MARC file
     marc_file_path = select_file_to_open("*.mrc")
     print(f"Selected MARC file: {marc_file_path}")
 
+    # Select folder
+    folder_path = select_folder()
+    print(f"Selected folder: {folder_path}")
+
     # Extract the field codes from the MARC file to populate the rules list
     print("Extracting field codes from the MARC file...")
     fields = extract_field_codes(marc_file_path)
-    print(f"Extracted field codes: {fields}")
+    print(f"Extracted field codes: {fields.sort()}")
 
     # Call function to create selection dialog for fields to drop
     print("Creating selection dialog for fields to drop...")
@@ -92,15 +89,12 @@ try:
     print(f"Saving dropped records' 001 fields to {output_file}...")
     save_dropped_records(dropped_records_001, output_file)
 
-    df = pd.DataFrame()  # Replace with your actual DataFrame
+    df = pd.DataFrame()  # Overwrite later w/DataFrame
 
     # Convert filtered MARC records to DataFrame
     print("Converting filtered MARC records to DataFrame...")
     df = marc_to_dataframe(filtered_records, fields, fields_to_drop)
     print("Conversion to DataFrame completed.")
-
-    # Extract the base name of the MARC file (without extension)
-    base_name = os.path.splitext(os.path.basename(marc_file_path))[0]
 
     # Get the current date and time
     current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -111,7 +105,7 @@ try:
     save_to_xlsxwriter_in_chunks(output_file, df)
     print(f"Data saved to {output_file}")
 
-except pymarc.exceptions.ReaderError as e:
+except pymarc.exceptions.FatalReaderError as e:
     print(f"ReaderError: Error reading MARC file - {e}")
 except ValueError as e:
     print(f"ValueError: Issue with data conversion - {e}")

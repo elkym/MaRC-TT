@@ -1,6 +1,7 @@
-import os
 import pandas as pd
 import pymarc
+import dask.dataframe as dd
+from general_utils import sort_key, sort_columns, generate_column_names # sort_key is a helper function called by sort_columns: see details in general_utils.py
 
 def escape_line_breaks(data):
     return data.replace('\r', '\n')
@@ -13,62 +14,6 @@ def flatten_list(nested_list):
         else:
             flat_list.append(item)
     return flat_list
-
-def generate_column_names(field_name, subfield_code, internal_count, subfield_count):
-    """
-    Generates column names for the DataFrame based on MARC field and subfield information.
-    The column names indicate the repetition of fields and subfields.
-    Example: 041.1.a.1, 041.1.a.2
-    In this example, these are both from the first instance of field 041, but indicate a repetition of subfield a, instance 1 and 2 of subfield a are denoted.
-    
-    Example: 600.1.IND, 600.1.a, 600.1.b, 600.2.IND, 600.2.a, 600.2.b
-    In this example, the 600 field as a whole has been repeated.
-    These columns indicate the indicators and subfield content for subfields a and b for the first and second instance of field 600.
-
-    Parameters:
-    - field_name: The name of the MARC field.
-    - subfield_code: The code of the MARC subfield.
-    - internal_count: The internal count of the field occurrence.
-    - subfield_count: The count of the subfield occurrence.
-
-    Returns:
-    - A string representing the generated column name.
-    """
-    if subfield_count > 1:
-        return f"{field_name}.{internal_count}.{subfield_code.strip('$')}.{subfield_count}"
-    else:
-        return f"{field_name}.{internal_count}.{subfield_code.strip('$')}"
-
-def has_excessive_repeats(record, field_tag, max_repeats):
-    count = sum(1 for field in record.get_fields(field_tag))
-    return count > max_repeats
-
-def extract_field_codes(marc_file_path):
-    field_codes = set()
-    with open(marc_file_path, 'rb') as fh:
-        records = pymarc.MARCReader(fh)
-        for record in records:
-            field_codes.add('LDR')
-            for field in record.fields:
-                field_codes.add(str(field.tag))
-    return list(field_codes)
-
-def sort_key(column_name):
-    parts = column_name.split('.')
-    if parts[0] == 'LDR':
-        field_tag = -1
-        field_occurrence = 1
-        subfield_code = ''
-        subfield_occurrence = 0
-    else:
-        field_tag = int(parts[0])
-        field_occurrence = int(parts[1])
-        subfield_code = parts[2] if len(parts) > 2 else ''
-        subfield_occurrence = int(parts[3]) if len(parts) > 3 else 0
-    return (field_tag, field_occurrence, subfield_code, subfield_occurrence)
-
-def sort_columns(columns):
-    return sorted(columns, key=sort_key)
 
 def extract_indicators(record, field_name, field_occurrence):
     """
@@ -94,34 +39,9 @@ def extract_indicators(record, field_name, field_occurrence):
                 indicator_data[column_name] = indicator_value
     return indicator_data
 
-def filter_records(marc_file_path, max_repeats):
-    filtered_records = []
-    dropped_records_001 = []
-    try:
-        with open(marc_file_path, 'rb') as fh:
-            records = pymarc.MARCReader(fh)
-            for record in records:
-                drop_record = False
-                for field in record.fields:
-                    if has_excessive_repeats(record, field.tag, max_repeats):
-                        drop_record = True
-                        break
-                if drop_record:
-                    field_001 = record['001'].value() if record['001'] else 'No 001 Field'
-                    dropped_records_001.append(field_001)
-                else:
-                    filtered_records.append(record)
-    except FileNotFoundError:
-        print(f"File not found: {marc_file_path}")
-    except pymarc.exceptions.ReaderError as e:
-        print(f"Error reading MARC file: {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-    return filtered_records, dropped_records_001
-
 def marc_to_dataframe(filtered_records, rules, fields_to_drop):
     """
-    Converts MARC records to a pandas DataFrame.
+    Converts MARC records to a Dask DataFrame.
 
     Parameters:
     - filtered_records: A list of filtered MARC records.
@@ -129,7 +49,7 @@ def marc_to_dataframe(filtered_records, rules, fields_to_drop):
     - fields_to_drop: A list of fields to be dropped from the DataFrame.
 
     Returns:
-    - A pandas DataFrame containing the transformed MARC records.
+    - A Dask DataFrame containing the transformed MARC records.
     """
     flattened_data = []
     try:
@@ -172,12 +92,30 @@ def marc_to_dataframe(filtered_records, rules, fields_to_drop):
         df.fillna('', inplace=True)
         df.replace('nan', '', inplace=True)
 
+        # Convert pandas DataFrame to Dask DataFrame
+        ddf = dd.from_pandas(df, npartitions=10)
+
+        # Define the replacement function
+        def replace_line_breaks(df, columns):
+            for col in columns:
+                df[col] = df[col].str.replace('\n', '¦¦', regex=False)
+            return df
+
+        # List of columns to check for line breaks
+        columns_to_check = [col for col in df.columns if col.startswith(('2', '5', '9'))]
+
+        # Apply the replacement function in parallel
+        ddf = ddf.map_partitions(replace_line_breaks, columns=columns_to_check)
+
+        # Compute the result
+        result_df = ddf.compute()
+
     except ValueError as e:
         print(f"ValueError: Issue with data conversion - {e}")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
     
-    return df
+    return result_df
 
 def custom_write(worksheet, row, col, value, column_name, field_001, log_file):
     """
@@ -205,14 +143,14 @@ def custom_write(worksheet, row, col, value, column_name, field_001, log_file):
 def save_to_xlsxwriter_in_chunks(output_file_path, df, chunk_size=1000):
     try:
         standard_width = 17
-        ind_width = 6.5
+        ind_width = 8
 
         writer = pd.ExcelWriter(output_file_path, engine='xlsxwriter')
         workbook = writer.book
         workbook.strings_to_urls = False
         worksheet = workbook.add_worksheet()
 
-        with open("error_log.txt", "w") as log_file:
+        with open("xlsx_write_error_log.txt", "w") as log_file:
             for col_num, value in enumerate(df.columns.values):
                 worksheet.write(0, col_num, value)
                 if "IND" in value:
@@ -221,7 +159,6 @@ def save_to_xlsxwriter_in_chunks(output_file_path, df, chunk_size=1000):
                     worksheet.set_column(col_num, col_num, standard_width)
 
             row_num = 1
-            wrap_format = workbook.add_format({'text_wrap': True})
 
             if '001.1' in df.columns:
                 field_001_index = df.columns.get_loc('001.1')
@@ -242,18 +179,28 @@ def save_to_xlsxwriter_in_chunks(output_file_path, df, chunk_size=1000):
 
                         if pd.isna(cell_value):
                             continue
-
-                        worksheet.write(row_num, col_num, cell_value_str, wrap_format)
-                        custom_write(worksheet, row_num, col_num, cell_value_str, df.columns[col_num], field_001, log_file)
-
+                        worksheet.write(row_num, col_num, cell_value_str)
                     worksheet.set_row(row_num, max_row_height * 15)
-
                     row_num += 1
-
         writer.close()
+
     except FileNotFoundError:
         print(f"File not found: {output_file_path}")
     except PermissionError:
         print(f"Permission denied: Unable to write to {output_file_path}")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
+
+def load_marc_records(mrc_file_path):
+    marc_records = {}
+    with open(mrc_file_path, 'rb') as fh:
+        reader = pymarc.MARCReader(fh)
+        for record in reader:
+            uid = record['001'].value()
+            marc_records[uid] = record
+    return marc_records
+
+def get_title(record):
+    if '245' in record and 'a' in record['245']:
+        return record['245']['a']
+    return 'Title not found'

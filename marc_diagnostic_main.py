@@ -1,12 +1,31 @@
-import os
+import dask.dataframe as dd
 import pandas as pd
-import tkinter as tk
-from file_handling import select_file_to_open, select_folder
-from datetime import datetime
+import os
 import config
-import pymarc
+from data_transformation import get_title, load_marc_records
+from file_handling import select_file_to_open, select_folder
+import logging
 
-def log_error(uid, title, error_code, error_message, additional_info=None):
+# Configure the logging
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[
+                        logging.FileHandler(r'C:\Users\elkym\OneDrive - Church of Jesus Christ\Documents\MarcTT-2025-Testing\dasktests_error_log.log'),
+                        logging.StreamHandler()
+                    ])
+
+# Define error constants
+ERR_NON_DIGIT_UID = 'ERR001: Non-digit characters in UID'
+ERR_DUPLICATE_CONTROL_FIELD = 'ERR005: Duplicate Control Field'
+ERR_NON_UTF8_ENCODING = 'ERR006: Non-UTF-8 encoding detected in field/subfield'
+ERR_RECORD_NOT_FOUND = 'ERR004: Record not found in Excel'
+ERR_MISSING_UID = 'ERR007: Missing UID in MARC record'
+ERR_EXCESSIVE_FIELD_REPETITIONS = 'ERR008: Excessive Field Repetitions'
+
+error_entries = []
+
+# Function to log errors
+def diag_log(uid, title, error_code, error_message, additional_info=None):
     error_entry = {
         'UID/TN': uid,
         'Title': title,
@@ -15,52 +34,43 @@ def log_error(uid, title, error_code, error_message, additional_info=None):
     }
     if additional_info:
         error_entry.update(additional_info)
-    error_entries.append(error_entry)
+    return error_entry
 
-def get_title(record):
-    if '245' in record and 'a' in record['245']:
-        return record['245']['a']
-    return 'Title not found'
+# Function to check for non-digit characters in UID
+def check_non_digit_uid(uid):
+    return not str(uid).isdigit()
 
-def get_last_modified_time(file_path):
-    """
-    Gets the last modified time of a file.
+# Function to check for duplicate control fields and presence of both '000' and 'LDR'
+def check_duplicate_control_fields(record):
+    control_fields = ['LDR', '000', '001', '003', '005', '006', '007', '008']
+    field_counts = {field: 0 for field in control_fields}
+    
+    # Lambda function to check for both 'LDR' and '000'
+    has_both_ldr_and_000 = lambda fields: any(field.tag == 'LDR' for field in fields) and any(field.tag == '000' for field in fields)
+    
+    for field in record.fields:
+        if field.tag in control_fields:
+            field_counts[field.tag] += 1
+            if field_counts[field.tag] > 1:
+                return True
+    
+    # Check if both '000' and 'LDR' fields are present
+    if has_both_ldr_and_000(record.fields):
+        return True
+    
+    return False
 
-    Parameters:
-    - file_path: The path to the file.
+# Function to check for non-UTF-8 encoding in fields/subfields
+def check_non_utf8_encoding(value):
+    try:
+        str(value).encode('utf-8')
+    except UnicodeEncodeError:
+        return True
+    return False
 
-    Returns:
-    - A string representing the last modified time in a readable format.
-    """
-    timestamp = os.path.getmtime(file_path)
-    last_modified_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
-    return last_modified_time
-
-# Main script
-try:
-    # Select MARC file
-    mrc_file_path = select_file_to_open("*.mrc")
-
-    # Select Tabular file
-    xlsx_file_path = select_file_to_open("*.xlsx", "*.parquet")
-
-    marc_last_modified = get_last_modified_time(mrc_file_path)
-    xlsx_last_modified = get_last_modified_time(xlsx_file_path)
-
-    marc_records = {}
-    with open(mrc_file_path, 'rb') as fh:
-        reader = pymarc.MARCReader(fh)
-        for record in reader:
-            uid = record['001'].value()
-            marc_records[uid] = record
-
-    print("MARC records loaded successfully.")
-
-    error_entries = []
-
-    # Use max_repeats from config file
-    max_repeats = config.MAX_REPEATS
-
+# Function to analyze field repetitions and log errors in a dictionary with UID as the key
+def analyze_field_repetitions(marc_records, max_repeats):
+    repetitions_dict = {}
     for uid, record in marc_records.items():
         field_counts = {}
         for field in record.fields:
@@ -69,35 +79,142 @@ try:
             field_counts[field.tag] += 1
         for field_tag, count in field_counts.items():
             if count > max_repeats:
-                log_error(uid, get_title(record), 'ERR008', f'Excessive repetitions of field {field_tag}', {'Field': field_tag, 'Count': count})
+                if uid not in repetitions_dict:
+                    repetitions_dict[uid] = []
+                repetitions_dict[uid].append(diag_log(
+                    uid,
+                    get_title(record),
+                    ERR_EXCESSIVE_FIELD_REPETITIONS,
+                    f"Field {field_tag} repeated {count} times",
+                    {'Field': field_tag, 'Repetitions': count}
+                ))
+    return repetitions_dict
 
-    error_log = pd.DataFrame(error_entries)
-    
-    # Prepend the error log with a line indicating the files used and their last modified times
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    header_info = (
-        f"Files used: MARC file - {mrc_file_path} (Last modified: {marc_last_modified}), "
-        f"XLSX file - {xlsx_last_modified} (Last modified: {xlsx_last_modified})\n"
-        f"Timestamp: {timestamp}\n"
-    )
-    
-    # Extract the base name of the MARC file (without extension)
-    base_name = os.path.splitext(os.path.basename(mrc_file_path))[0]
+# Main script
+try:
+    # Select MARC file
+    mrc_file_path = select_file_to_open("*.mrc")
 
-    # Select folder to save the error log
+    # Load MARC records
+    marc_records = load_marc_records(mrc_file_path)
+    print(f"Loaded {len(marc_records)} MARC records.")
+    logging.info("MARC records loaded successfully.")
+    
+    # Use max_repeats from config file (Placeholder value)
+    max_repeats = config.MAX_REPEATS
+    print(f"Maximum field repetitions allowed: {max_repeats}")
+
+    # Analyze field repetitions and log errors
+    repetitions_dict = analyze_field_repetitions(marc_records, max_repeats)
+    print(f"Field repetition analysis completed. Found {len(repetitions_dict)} errors.")
+
+    # Select folder to save the error logs
     folder_path = select_folder()
     print(f"Selected folder: {folder_path}")
+    logging.info(f"Selected folder: {folder_path}")
 
-    # Update the output file name
-    output_file_path = os.path.join(folder_path, f"{base_name}_error_log.tsv")
+    try:
+        xlsx_file_path = select_file_to_open("*.xlsx")
+        df = pd.read_excel(xlsx_file_path)
+        print(f"Excel data loaded:\n{df.head(10)}")
+        logging.debug(f"Excel data loaded:\n{df.head(10)}")
+    except FileNotFoundError as e:
+        print(f"Excel file not found: {e}")
+        logging.error(f"Excel file not found: {e}")
+    except pd.errors.EmptyDataError as e:
+        print(f"Excel file is empty: {e}")
+        logging.error(f"Excel file is empty: {e}")
+    except pd.errors.ParserError as e:
+        print(f"Error parsing Excel file: {e}")
+        logging.error(f"Error parsing Excel file: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred while loading the Excel file: {e}")
+        logging.error(f"An unexpected error occurred while loading the Excel file: {e}")
 
-    with open(output_file_path, 'w', encoding='utf-8') as f:
-        f.write(header_info)
-        error_log.to_csv(f, sep='\t', index=False, encoding='utf-8')
-    
-    print(f"Field repetition analysis and error logging completed successfully. Log saved to {output_file_path}")
+    # Debug: Print Excel data loaded
+    print(f"Excel data loaded:\n{df.head(10)}")  # Print only the first few rows
+    logging.debug(f"Excel data loaded:\n{df.head(10)}")  # Print only the first few rows
+
+    # Check for records not found in Excel and delete matching dictionary entries
+    for uid in list(repetitions_dict.keys()):
+        if uid in df['001.1.'].values:
+            del repetitions_dict[uid]
+        else:
+            repetitions_dict[uid].append(diag_log(uid, get_title(marc_records[uid]), ERR_RECORD_NOT_FOUND, "Record not found in Excel"))
+    print(f"Records not found in tabular data removed; \nverified as correctly dropped. Remaining errors not found in tabular data: {len(error_entries)}")
+
+    # Check for non-digit characters in UID and log errors
+    for index, row in df.iterrows():
+        uid = row['001.1.']
+        if check_non_digit_uid(uid):
+            error_entries.append(diag_log(uid, row['245$a'], ERR_NON_DIGIT_UID, "Non-digit characters in UID"))
+    print(f"Non-digit UID check completed. Errors: {len(error_entries)}")
+
+    # Check for duplicate control fields and log errors
+    for uid, record in marc_records.items():
+        if check_duplicate_control_fields(record):
+            error_entries.append(diag_log(uid, get_title(record), ERR_DUPLICATE_CONTROL_FIELD, "Duplicate Control Field"))
+    print(f"MaRC records duplicate control field check completed. Errors: {len(error_entries)}")
+
+    # Check for non-UTF-8 encoding and log errors
+    for index, row in df.iterrows():
+        for col in row.index:
+            value = row[col]
+            if check_non_utf8_encoding(value):
+                error_entries.append(diag_log(row['001.1.'], row['245$a'], ERR_NON_UTF8_ENCODING, "Non-UTF-8 encoding detected", {'Field': col}))
+    print(f"Non-UTF-8 encoding check completed. Errors: {len(error_entries)}")
+
+    # Debug: Print error entries after checking non-UTF-8 encoding
+    print(f"Error entries after checking non-UTF-8 encoding: {error_entries[:10]}")  # Print only the first 10 entries
+    logging.debug(f"Error entries after checking non-UTF-8 encoding: {error_entries[:10]}")  # Print only the first 10 entries
+
+    # Convert error entries to a Dask DataFrame
+    if error_entries:
+        error_log = dd.from_pandas(pd.DataFrame(error_entries), npartitions=4)
+        base_name = os.path.splitext(os.path.basename(mrc_file_path))[0]
+
+        # Get the unique error codes from the DataFrame
+        unique_error_codes = error_log['Error Code'].unique().compute()
+        print(f"Unique error codes: {unique_error_codes}")
+        
+        # Iterate over each unique error code and save the corresponding data to a TSV file
+        for error_code in unique_error_codes:
+            print(f"Processing error code: {error_code}")
+            group = error_log[error_log['Error Code'] == error_code].compute()
+            output_file_path = os.path.join(folder_path, f"{base_name}_error_log_{error_code}.tsv")
+            
+            # Log the file writing attempt
+            print(f"Writing to {output_file_path}")
+            logging.info(f"Writing to {output_file_path}")
+            logging.debug(f"Data to write:\n{group.head()}")  # Print only the first few rows
+
+            # Check if the group DataFrame is empty
+            if group.empty:
+                print(f"The group for error code {error_code} is empty.")
+                logging.warning(f"The group for error code {error_code} is empty.")
+            else:
+                # Write the filtered DataFrame to a TSV file with tab separator
+                group.to_csv(output_file_path, sep='\t', index=False)
+                print(f"File {output_file_path} written successfully.")
+                logging.info(f"File {output_file_path} written successfully.")
+
+        # Check if the file is empty after writing
+        if os.path.getsize(output_file_path) == 0:
+            print(f"The file {output_file_path} is empty after writing.")
+            logging.error(f"The file {output_file_path} is empty after writing.")
+        else:
+            print(f"File {output_file_path} written successfully.")
+            logging.info(f"File {output_file_path} written successfully.")
+
+        print(f"Field repetition analysis and error logging completed successfully. Logs saved to {folder_path}")
+        logging.info(f"Field repetition analysis and error logging completed successfully. Logs saved to {folder_path}")
+    else:
+        print("No errors found. No logs to save.")
+        logging.info("No errors found. No logs to save.")
 
 except FileNotFoundError as e:
-    print(e)
+    print(f"File not found: {e}")
+    logging.error(f"File not found: {e}")
 except Exception as e:
     print(f"An unexpected error occurred: {e}")
+    logging.error(f"An unexpected error occurred: {e}")
