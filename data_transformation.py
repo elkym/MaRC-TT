@@ -2,6 +2,7 @@ import pandas as pd
 import pymarc
 import dask.dataframe as dd
 from general_utils import sort_key, sort_columns, generate_column_names # sort_key is a helper function called by sort_columns: see details in general_utils.py
+import config
 
 def escape_line_breaks(data):
     return data.replace('\r', '\n')
@@ -28,8 +29,7 @@ def extract_indicators(record, field_name, field_occurrence):
     - A dictionary containing indicator data with column names as keys and indicator values as values.
     """
     indicator_data = {}
-    control_fields = ['LDR', '001', '005', '006', '007', '008']
-    if field_name not in control_fields:
+    if field_name not in config.CONTROL_FIELDS:
         for field in record.get_fields(field_name):
             if field.indicators:
                 indicator1 = field.indicators[0] if field.indicators[0].isdigit() else '#'
@@ -190,17 +190,3 @@ def save_to_xlsxwriter_in_chunks(output_file_path, df, chunk_size=1000):
         print(f"Permission denied: Unable to write to {output_file_path}")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
-
-def load_marc_records(mrc_file_path):
-    marc_records = {}
-    with open(mrc_file_path, 'rb') as fh:
-        reader = pymarc.MARCReader(fh)
-        for record in reader:
-            uid = record['001'].value()
-            marc_records[uid] = record
-    return marc_records
-
-def get_title(record):
-    if '245' in record and 'a' in record['245']:
-        return record['245']['a']
-    return 'Title not found'

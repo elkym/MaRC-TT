@@ -13,7 +13,7 @@ def select_file_to_open(*file_extensions):
     - file_extensions: Arbitrary number of file extensions to filter by (default is a predefined list).
 
     Returns:
-    - The path to the selected file.
+    - The path to the selected file, or None if the user aborts.
     """
     if not file_extensions:
         file_extensions = [
@@ -27,15 +27,20 @@ def select_file_to_open(*file_extensions):
     else:
         file_extensions = [(f"{ext} files", ext) for ext in file_extensions]
 
-    root = Tk()
-    root.withdraw()  # Hide the root window
-    file_path = filedialog.askopenfilename(
-        title="Select a file to open",
-        filetypes=file_extensions
-    )
-    if not file_path:
-        raise FileNotFoundError("No file selected.")
-    return file_path
+    while True:
+        root = Tk()
+        root.withdraw()  # Hide the root window
+        file_path = filedialog.askopenfilename(
+            title="Select a file to open",
+            filetypes=file_extensions
+        )
+        if file_path:
+            return file_path
+        else:
+            user_input = input("No file selected. Do you want to retry? (y/n): ").strip().lower()
+            if user_input != 'y':
+                print("Aborting the file selection.")
+                return None
 
 def select_file_to_save(*file_extensions, default_name=None):
     """

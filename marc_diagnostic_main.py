@@ -2,259 +2,205 @@ import dask.dataframe as dd
 import pandas as pd
 import os
 import config
-from data_transformation import get_title, load_marc_records
+import warnings
+from tqdm import tqdm
+from datetime import datetime
+import re
+from marctt_classes import *  # Import all classes from marctt_classes.py
+from marc_diag_utils import *  # Import all functions from marc_diag_utils.py
 from file_handling import select_file_to_open, select_folder
-import logging
+from hashmap_utils import *  # Import all functions from hashmap_utils.py
 
-# Configure the logging
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[
-                        logging.FileHandler(r'C:\Users\elkym\OneDrive - Church of Jesus Christ\Documents\MarcTT-2025-Testing\dasktests_error_log.log'),
-                        logging.StreamHandler()
-                    ])
-
-# Define error constants
-ERR_NON_DIGIT_UID = 'ERR001: Non-digit characters in UID'
-ERR_RECORD_NOT_FOUND = 'ERR002: Record not found in Excel'
-ERR_DUPLICATE_CONTROL_FIELD = 'ERR003: Duplicate Control Field'
-ERR_NON_UTF8_ENCODING = 'ERR004: Non-UTF-8 encoding detected in field/subfield'
-ERR_MISSING_UID = 'ERR005: Missing UID in MARC record'
-ERR_EXCESSIVE_FIELD_REPETITIONS = 'ERR006: Excessive Field Repetitions'
-ERR_CASE_SENSITIVITY_MISMATCH = 'ERR007: Case sensitivity mismatch'
+global mrc_file_path, xlsx_file_path, df_map
 
 error_entries = []
 
-# Function to log errors
-def diag_log(uid, title, error_code, error_message, additional_info=None):
-    error_entry = {
-        'UID/TN': uid,
-        'Title': title,
-        'Error Code': error_code,
-        'Error Message': error_message
-    }
-    if additional_info:
-        error_entry.update(additional_info)
-    return error_entry
+# Initialize comparators
+static_comparator = StaticFieldComparator()
+dynamic_comparator = DynamicFieldComparator()
 
-# Function to check for non-digit characters in UID
-def check_non_digit_uid(uid):
-    return not str(uid).isdigit()
+# Custom warning handler
+def warning_handler(message, category, filename, lineno, file=None, line=None):
+    print(f"Warning: {message}")
+    user_input = input("Data corruption detected. Do you want to abort the script? (y/n): ")
+    if user_input.lower() == 'y':
+        exit()
+warnings.showwarning = warning_handler
 
-# Function to check for duplicate control fields and presence of both '000' and 'LDR'
-def check_duplicate_control_fields(record):
-    control_fields = ['LDR', '000', '001', '003', '005', '006', '007', '008']
-    field_counts = {field: 0 for field in control_fields}
-    
-    # Lambda function to check for both 'LDR' and '000'
-    has_both_ldr_and_000 = lambda fields: any(field.tag == 'LDR' for field in fields) and any(field.tag == '000' for field in fields)
-    
-    for field in record.fields:
-        if field.tag in control_fields:
-            field_counts[field.tag] += 1
-            if field_counts[field.tag] > 1:
-                return True
-    
-    # Check if both '000' and 'LDR' fields are present
-    if has_both_ldr_and_000(record.fields):
-        return True
-    
-    return False
-
-# Function to check for non-UTF-8 encoding in fields/subfields
-def check_non_utf8_encoding(value):
-    try:
-        str(value).encode('utf-8')
-    except UnicodeEncodeError:
-        return True
-    return False
-
-# Function to compare strings with case sensitivity option
-def compare_strings(str1, str2, case_sensitive=True):
-    if str1 is None or str2 is None:
-        return str1 == str2
-    if case_sensitive:
-        return str1 == str2
-    else:
-        return str1.lower() == str2.lower()
-
-# Function to analyze field repetitions and log errors in a dictionary with UID as the key
-def analyze_field_repetitions(marc_records, max_repeats):
-    repetitions_dict = {}
-    for uid, record in marc_records.items():
-        field_counts = {}
-        for field in record.fields:
-            if field.tag not in field_counts:
-                field_counts[field.tag] = 0
-            field_counts[field.tag] += 1
-        for field_tag, count in field_counts.items():
-            if count > max_repeats:
-                if uid not in repetitions_dict:
-                    repetitions_dict[uid] = []
-                repetitions_dict[uid].append(diag_log(
-                    uid,
-                    get_title(record),
-                    ERR_EXCESSIVE_FIELD_REPETITIONS,
-                    f"Field {field_tag} repeated {count} times",
-                    {'Field': field_tag, 'Repetitions': count}
-                ))
-    return repetitions_dict
-
-# Main script
 try:
-    # Select MARC file
+    # Select MARC file and load MARC records
     mrc_file_path = select_file_to_open("*.mrc")
-
-    # Load MARC records
     marc_records = load_marc_records(mrc_file_path)
     print(f"Loaded {len(marc_records)} MARC records.")
-    logging.info("MARC records loaded successfully.")
-    
-    # Use max_repeats from config file (Placeholder value)
+except FileNotFoundError as e:
+    print(f"MARC file not found: {e}")
+except Exception as e:
+    print(f"An unexpected error occurred while loading MARC records: {e}")
+
+try:
+    # Use max_repeats from config file
     max_repeats = config.MAX_REPEATS
     print(f"Maximum field repetitions allowed: {max_repeats}")
 
     # Analyze field repetitions and log errors
     repetitions_dict = analyze_field_repetitions(marc_records, max_repeats)
     print(f"Field repetition analysis completed. Found {len(repetitions_dict)} errors.")
+except Exception as e:
+    print(f"An unexpected error occurred during field repetition analysis: {e}")
 
-    # Select folder to save the error logs
+try:
+    # Select folder to save the diagnostic logs
     folder_path = select_folder()
     print(f"Selected folder: {folder_path}")
-    logging.info(f"Selected folder: {folder_path}")
+except Exception as e:
+    print(f"An unexpected error occurred while selecting folder: {e}")
 
-    try:
-        xlsx_file_path = select_file_to_open("*.xlsx")
-        df = pd.read_excel(xlsx_file_path)
-        print(f"Excel data loaded:\n{df.head(10)}")
-        logging.debug(f"Excel data loaded:\n{df.head(10)}")
-    except FileNotFoundError as e:
-        print(f"Excel file not found: {e}")
-        logging.error(f"Excel file not found: {e}")
-    except pd.errors.EmptyDataError as e:
-        print(f"Excel file is empty: {e}")
-        logging.error(f"Excel file is empty: {e}")
-    except pd.errors.ParserError as e:
-        print(f"Error parsing Excel file: {e}")
-        logging.error(f"Error parsing Excel file: {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred while loading the Excel file: {e}")
-        logging.error(f"An unexpected error occurred while loading the Excel file: {e}")
+try:
+    # Load Excel data
+    xlsx_file_path = select_file_to_open("*.xlsx")
+    print(f"Preparing to load dataframe with Excel data from {xlsx_file_path}")
+    df = pd.read_excel(xlsx_file_path, dtype=str)
+    print(f"Excel data loaded:\n{df.head(10)}")
+except FileNotFoundError as e:
+    print(f"Excel file not found: {e}")
+except pd.errors.EmptyDataError as e:
+    print(f"Excel file is empty: {e}")
+except pd.errors.ParserError as e:
+    print(f"Error parsing Excel file: {e}")
+except Exception as e:
+    print(f"An unexpected error occurred while loading the Excel file: {e}")
 
-    # Debug: Print Excel data loaded
-    print(f"Excel data loaded:\n{df.head(10)}")  # Print only the first few rows
-    logging.debug(f"Excel data loaded:\n{df.head(10)}")  # Print only the first few rows
+timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
-    # Check for records not found in Excel and delete matching dictionary entries
-    for uid in list(repetitions_dict.keys()):
-        if uid in df['001.1.'].values:
-            del repetitions_dict[uid]
+def hash_map_helper():
+    perform_checks(df, df_map, repetitions_dict, error_entries, marc_records)
+    save_hash_map(df_map, folder_path, timestamp, mrc_file_path, xlsx_file_path)
+    save_metadata(mrc_file_path, xlsx_file_path, folder_path, timestamp)
+
+try:
+    df_map = None  # Initialize df_map
+
+    # Check if the same files are selected
+    if check_same_files(mrc_file_path, xlsx_file_path, folder_path):
+        regenerate = input("The same files were selected as last time. Do you want to regenerate the hash map? (y/n): ")
+        if regenerate.lower() == 'y':
+            df_map = create_hash_map(df)
+            hash_map_helper()  # First call
+            print(f"Hash map created with {len(df_map)} entries.")
         else:
-            repetitions_dict[uid].append(diag_log(uid, get_title(marc_records[uid]), ERR_RECORD_NOT_FOUND, "Record not found in Excel"))
-    print(f"Records not found in tabular data removed; \nverified as correctly dropped. Remaining errors not found in tabular data: {len(error_entries)}")
+            df_map = load_hash_map(folder_path)
+            if df_map is None:
+                print("No existing hash map found. Regenerating...")
+                df_map = create_hash_map(df)
+                hash_map_helper()  # Second call
+            elif not validate_and_sample_check(df_map, sample_fraction=0.2, early_stop=True):
+                print("Loaded hash map is invalid. Regenerating...")
+                df_map = create_hash_map(df)
+                hash_map_helper()  # Third call
+            else:
+                print("Performing checks on loaded hash map...")
+                perform_checks(df, df_map, repetitions_dict, error_entries, marc_records)
+    else:
+        df_map = create_hash_map(df)
+        hash_map_helper()  # Fourth call
+        print(f"Hash map created with {len(df_map)} entries.")
 
-    # Check for non-digit characters in UID and log errors
-    for index, row in df.iterrows():
-        uid = row['001.1.']
-        if check_non_digit_uid(uid):
-            error_entries.append(diag_log(uid, row['245$a'], ERR_NON_DIGIT_UID, "Non-digit characters in UID"))
-    print(f"Non-digit UID check completed. Errors: {len(error_entries)}")
+    # Initialize the IndicatorValidator
+    indicator_validator = IndicatorValidator()
 
-    # Check for duplicate control fields and log errors
-    for uid, record in marc_records.items():
-        if check_duplicate_control_fields(record):
-            error_entries.append(diag_log(uid, get_title(record), ERR_DUPLICATE_CONTROL_FIELD, "Duplicate Control Field"))
-    print(f"MaRC records duplicate control field check completed. Errors: {len(error_entries)}")
+    # Validate indicators in MARC records
+    try:
+        invalid_indicators_marc = {}
+        for uid, record in marc_records.items():
+            # Exclude control fields
+            filtered_fields = [field for field in record.fields if field.tag not in config.CONTROL_FIELDS]
+            record.fields = filtered_fields
+            
+            invalid_indicators = indicator_validator.validate_marc_indicators(record)
+            if invalid_indicators:
+                invalid_indicators_marc[uid] = invalid_indicators
+                for field_tag, indicators in invalid_indicators:
+                    error_entries.append(diag_log(uid, get_title(record), config.ERR_INVALID_INDICATOR, f"Invalid indicators in field {field_tag}: {indicators}"))
+    except UserWarning as e:
+        print(e)
 
-    # Check for non-UTF-8 encoding and log errors
-    for index, row in df.iterrows():
-        for col in row.index:
-            value = row[col]
-            if check_non_utf8_encoding(value):
-                error_entries.append(diag_log(row['001.1.'], row['245$a'], ERR_NON_UTF8_ENCODING, "Non-UTF-8 encoding detected", {'Field': col}))
-    print(f"Non-UTF-8 encoding check completed. Errors: {len(error_entries)}")
+    # Use FIELDS_TO_COMPARE from config.py
+    FIELDS_TO_COMPARE = config.FIELDS_TO_COMPARE
+    print(f"Fields to compare loaded from config file: {FIELDS_TO_COMPARE}")
 
-    # Compare strings with case sensitivity option
-    fields_to_compare = {
-        'LDR': 'LDR.1',
-        '003': '003.1.',
-        '008': '008.1.'
-    }
-    case_sensitive = True  # Set this to False if case-insensitive comparison is needed
+    # Validate indicators from tabular data using df_map
+    try:
+        invalid_indicators_tabular = indicator_validator.validate_tabular_indicators(df_map)
+        for uid, col, indicator in invalid_indicators_tabular:
+            print(str(df_map[uid]['245.1.a']))
+            error_entries.append(diag_log(uid, df_map[uid]['245.1.a'], config.ERR_INVALID_INDICATOR, f"Invalid indicator in column {col}: {indicator}"))
+    except UserWarning as e:
+        print(e)
+    try:
+        print("Starting string comparisons...")
+        for uid, record in tqdm(marc_records.items(), desc="Comparing records"):
+            if uid in df_map:
+                df_row = df_map[uid]
+                for marc_field, field_info in FIELDS_TO_COMPARE.items():
+                    try:
+                        print(f"Comparing UID: {uid}, MARC Field: {marc_field}, Field Info: {field_info}")
+                        marc_data = record.get_fields(marc_field)
+                        tabular_data = df_row.get(marc_field, "")
+                        print(f"MARC Data: {marc_data}, Type: {type(marc_data)}, Tabular Data: {tabular_data}, Type: {type(tabular_data)}")
 
-    # Create hash map for dataframe
-    df_map = {row['001.1.']: row for index, row in df.iterrows()}
-    print("Hash map for dataframe created.")  # Debugging line
+                        if isinstance(field_info, list):
+                            if not dynamic_comparator.compare_field(record, df_row, marc_field, field_info):
+                                error_entries.append(diag_log(uid, df_row['LDR.1'], config.ERR_STRING_MISMATCH, "String mismatch", marc_data, tabular_data, {'Field': marc_field}))
+                        else:
+                            if not static_comparator.compare_field(record, df_row, marc_field, field_info):
+                                error_entries.append(diag_log(uid, df_row['LDR.1'], config.ERR_STRING_MISMATCH, "String mismatch", marc_data, tabular_data, {'Field': marc_field}))
+                    except Exception as e:
+                        print(f"Error comparing UID: {uid}, MARC Field: {marc_field}, Field Info: {field_info}")
+                        print(f"Exception: {e}")
+                        print(f"MARC Data: {marc_data}, Type: {type(marc_data)}, Tabular Data: {tabular_data}, Type: {type(tabular_data)}")
+                        error_entries.append(diag_log(uid, df_row['LDR.1'], config.ERR_STRING_MISMATCH, f"Exception during comparison: {e}", marc_data, tabular_data, {'Field': marc_field}))
 
-    # Iterate over the dictionary items (key-value pairs)
-    for uid, record in marc_records.items():
-        print(f"UID: {uid}")  # Debugging line
-        if uid in df_map:
-            df_row = df_map[uid]
-            ### print(f"Dataframe row: {df_row}")  # Debugging line
-            for marc_field, df_field in fields_to_compare.items():
-                ### print(f"Checking MARC field: {marc_field}")  # Debugging line
-                if marc_field in record:
-                    marc_value = str(record[marc_field].value()) if record[marc_field] else ''
-                else:
-                    marc_value = ''
-                df_value = str(df_row.get(df_field))
-                if not compare_strings(marc_value, df_value, case_sensitive):
-                    error_entries.append(diag_log(uid, df_row['LDR.1'], ERR_CASE_SENSITIVITY_MISMATCH, "Case sensitivity mismatch", {'Field': marc_field}))
+        print(f"String comparison completed. Errors: {len(error_entries)}")
+    except Exception as e:
+        print(f"An unexpected error occurred during string comparisons: {e}")
 
-    print(f"String comparison with case sensitivity check completed. Errors: {len(error_entries)}")
-
-    # Debug: Print error entries after checking case sensitivity
-    print(f"Error entries after checking case sensitivity: {error_entries[:10]}")  # Print only the first 10 entries
-    logging.debug(f"Error entries after checking case sensitivity: {error_entries[:10]}")
-
-    # Convert error entries to a Dask DataFrame
     if error_entries:
+        ## print(f"Error entries- {error_entries}")  # Debug statement
         error_log = dd.from_pandas(pd.DataFrame(error_entries), npartitions=4)
+        ## print(f"Error log DataFrame:\n{error_log.compute()}")  # Debug statement
         base_name = os.path.splitext(os.path.basename(mrc_file_path))[0]
-
-        # Get the unique error codes from the DataFrame
         unique_error_codes = error_log['Error Code'].unique().compute()
         print(f"Unique error codes: {unique_error_codes}")
         
-        # Iterate over each unique error code and save the corresponding data to a TSV file
-        for error_code in unique_error_codes:
+        for error_code in tqdm(unique_error_codes, desc="Processing error codes"):
             print(f"Processing error code: {error_code}")
             group = error_log[error_log['Error Code'] == error_code].compute()
-            output_file_path = os.path.join(folder_path, f"{base_name}_error_log_{error_code}.tsv")
-            
-            # Log the file writing attempt
-            print(f"Writing to {output_file_path}")
-            logging.info(f"Writing to {output_file_path}")
-            logging.debug(f"Data to write:\n{group.head()}")  # Print only the first few rows
+            ## print(f"Group DataFrame for error code {error_code}:\n{group}")  # Debug statement
 
-            # Check if the group DataFrame is empty
-            if group.empty:
-                print(f"The group for error code {error_code} is empty.")
-                logging.warning(f"The group for error code {error_code} is empty.")
-            else:
-                # Write the filtered DataFrame to a TSV file with tab separator
-                group.to_csv(output_file_path, sep='\t', index=False)
-                print(f"File {output_file_path} written successfully.")
-                logging.info(f"File {output_file_path} written successfully.")
+            # Sanitize the error code to replace any non-alphanumeric characters with an underscore
+            sanitized_error_code = re.sub(r'[^\w\s-]', '_', error_code).replace(' ', '_')
+            output_file_path = os.path.join(folder_path, f"{base_name}_error_log_{sanitized_error_code}.tsv")
+            print(f"Sanitized output file path: {output_file_path}")  # Debug statement
 
-        # Check if the file is empty after writing
-        if os.path.getsize(output_file_path) == 0:
-            print(f"The file {output_file_path} is empty after writing.")
-            logging.error(f"The file {output_file_path} is empty after writing.")
-        else:
+            ## print(f"DataFrame content before writing to {output_file_path}:\n{group}")  # Debug statement
+            group.to_csv(output_file_path, sep='\t', index=False)
+
+            # Verify file content after writing
+            with open(output_file_path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+            ## print(f"File content after writing to {output_file_path}:\n{file_content}")  # Debug statement
             print(f"File {output_file_path} written successfully.")
-            logging.info(f"File {output_file_path} written successfully.")
-
-        print(f"Field repetition analysis and error logging completed successfully. Logs saved to {folder_path}")
-        logging.info(f"Field repetition analysis and error logging completed successfully. Logs saved to {folder_path}")
+                    
+            # Check if the file is empty after writing
+            if os.path.getsize(output_file_path) == 0:
+                print(f"The file {output_file_path} is empty after writing.")
+            else:
+                print(f"File {output_file_path} written successfully.")
+        print(f"Field repetition analysis and diagnostic logging completed successfully. Logs saved to {folder_path}")
     else:
         print("No errors found. No logs to save.")
-        logging.info("No errors found. No logs to save.")
 
 except FileNotFoundError as e:
     print(f"File not found: {e}")
-    logging.error(f"File not found: {e}")
 except Exception as e:
     print(f"An unexpected error occurred: {e}")
-    logging.error(f"An unexpected error occurred: {e}")

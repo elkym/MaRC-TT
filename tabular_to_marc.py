@@ -50,12 +50,16 @@ def check_control_fields_presence(df, control_fields):
 # List of control fields including LDR
 control_fields = ['LDR', '001', '003', '005', '006', '007', '008']
 
+# Register `tqdm` with `pandas`
+tqdm.pandas(desc="Processing DataFrame")
+
 # Try-except block to handle potential exceptions when reading the Excel file
 try:
-    # Read data from Excel with all columns specified as strings and 'N/A' treated as a string
-    df = pd.read_excel(origin_file, dtype=str, na_values=['', 'NaN', 'null'])
-    tqdm.pandas(desc="Reading Excel file")
-    df['952.1.c'] = df['952.1.c'].fillna('N/A')
+    # Read the entire Excel file
+    df = pd.read_excel(origin_file, dtype=str, keep_default_na=False, na_values=['', 'NaN', 'null'])
+    
+    # Fill NaN values with 'N/A' using `tqdm` progress bar
+    df['952.1.c'] = df['952.1.c'].progress_apply(lambda x: 'N/A' if pd.isna(x) else x)
     
     # Check for the presence of all required control fields
     all_fields_present, missing_fields = check_control_fields_presence(df, control_fields)
@@ -74,9 +78,6 @@ except ValueError as e:
 except IOError as e:
     print(f"Error: An I/O error occurred while reading the file {origin_file}: {e}. Please check file permissions and try again.")
     exit()
-
-# Global variable for invalid records, initialized as an empty DataFrame
-invalid_records_df = pd.DataFrame()
 
 # Function to parse header and extract field, occurrence, subfield, and subfield occurrence number
 def parse_header(header):
@@ -136,6 +137,9 @@ def validate_header(header, control_fields):
         return True, f"Header contains empty parts, {header}"
     
     return True, ""
+
+# Global variable for invalid records, initialized as an empty DataFrame
+invalid_records_df = pd.DataFrame()
 
 # Validate all headers before processing
 for column_name in df.columns:
