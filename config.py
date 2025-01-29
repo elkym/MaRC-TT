@@ -7,8 +7,8 @@ The user can specify this file path, or set USE_DEFAULT_FOLDER to False,
 in which case, file saving methods will prompt the user
 with a tkinter file selection window. 
 '''
-DEFAULT_FOLDER_PATH = r"C:\Users\elkym\OneDrive - Church of Jesus Christ\Documents\MarcTT-2025-Testing"
-USE_DEFAULT_FOLDER = True
+DEFAULT_FOLDER_PATH = ''
+USE_DEFAULT_FOLDER = False
 
 # Constants for MaRC and tabular data comparison
 '''
