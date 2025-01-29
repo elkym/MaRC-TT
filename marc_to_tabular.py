@@ -3,8 +3,16 @@ import pandas as pd
 import pymarc
 import tkinter as tk
 from tkinter import simpledialog
-from file_handling import select_file_to_open, save_dropped_records, select_folder, extract_field_codes, filter_records
-from data_transformation import marc_to_dataframe, save_to_xlsxwriter_in_chunks
+from file_handling import (
+    select_file_to_open,
+    save_dropped_records,
+    select_folder,
+    extract_field_codes,
+    filter_records,
+    select_file_to_save
+    )
+from data_transformation import marc_to_dataframe
+from marctt_classes import DataFrameSaver
 import config
 from datetime import datetime
 
@@ -99,11 +107,20 @@ try:
     # Get the current date and time
     current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Save DataFrame to XLSX with date and time in the file name
-    output_file = os.path.join(folder_path, f"{base_name}_{current_datetime}.xlsx")
-    print(f"Saving DataFrame to {output_file}...")
-    save_to_xlsxwriter_in_chunks(output_file, df)
-    print(f"Data saved to {output_file}")
+    # Prepopulate the save dialog with the base name and date-time
+    default_name = f"{base_name}_{current_datetime}"
+    file_path = select_file_to_save("*.xlsx", "*.parquet", default_name=default_name)
+    print(f"Saving DataFrame to {file_path}...")
+
+    # Initialize DataFrameSaver and save DataFrame
+    saver = DataFrameSaver()
+    print("File path:", file_path)
+    if file_path.endswith('.xlsx'):
+        saver.save_to_xlsx(df, file_path)
+    elif file_path.endswith('.parquet'):
+        saver.save_to_parquet(df, file_path)
+
+    print(f"Data saved to {file_path}")
 
 except pymarc.exceptions.FatalReaderError as e:
     print(f"ReaderError: Error reading MARC file - {e}")

@@ -117,7 +117,7 @@ def marc_to_dataframe(filtered_records, rules, fields_to_drop):
     
     return result_df
 
-def custom_write(worksheet, row, col, value, column_name, field_001, log_file):
+def custom_write(worksheet, row, col, value, column_name, field_001, log_file): # Currently not in use-- former debugging function
     """
     Writes a value to an Excel worksheet cell and logs NaN values.
     This function was developed to help determine how various NaN values are being handled by the script-- as some fields in MaRC data are customized for specific systems:

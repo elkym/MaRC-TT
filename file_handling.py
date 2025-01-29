@@ -51,16 +51,15 @@ def select_file_to_save(*file_extensions, default_name=None):
     - default_name: Optional default file name for the save dialog.
 
     Returns:
-    - The path to the selected file.
+    - The path to the selected file, or None if the user aborts.
     """
     if not file_extensions:
         file_extensions = [
-            ("MARC files", "*.mrc"),
             ("Excel files", "*.xlsx"),
+            ("CSV files", "*.csv"),
             ("TSV files", "*.tsv"),
-            ("Text files", "*.txt"),
             ("Parquet files", "*.parquet"),
-            ("CSV files", "*.csv")
+            ("Text files", "*.txt")
         ]
     else:
         file_extensions = [(f"{ext} files", ext) for ext in file_extensions]
@@ -74,6 +73,19 @@ def select_file_to_save(*file_extensions, default_name=None):
     )
     if not file_path:
         raise FileNotFoundError("No file selected.")
+
+    # Ensure the file path has the correct extension
+    selected_extension = file_path.split('.')[1]
+    print(f"Selected extension: {selected_extension}")
+    print(f"List of valid extensions: {file_extensions}")
+    if selected_extension not in [ext[1:] for _, ext in file_extensions]:
+        user_input = input("No file extension selected. Do you want to retry? (y/n): ").strip().lower()
+        if user_input != 'y':
+            print("Aborting the file selection. Script aborted.")
+            quit()
+        else:
+            return select_file_to_save(*file_extensions, default_name=default_name)
+
     return file_path
 
 def select_folder():
