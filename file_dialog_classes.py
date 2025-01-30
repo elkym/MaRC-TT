@@ -26,6 +26,10 @@ class FileDialog:
         if not file_path:
             raise FileNotFoundError("No file selected.")
         self.selected_file_type = self._get_file_type(file_path)
+        if not self.selected_file_type:
+            # Append the default extension based on the selected file type
+            self.selected_file_type = self.file_extensions[0]  # Default to the first extension if none is selected
+            file_path += self.selected_file_type
         return file_path, self.selected_file_type
 
     def select_file_to_open(self):
@@ -45,9 +49,31 @@ class FileDialog:
                     print("Aborting the file selection.")
                     return None, None
 
+    def create_file(self, file_path):
+        with open(file_path, 'w') as file:
+            file.write("")  # Create an empty file
+        print(f"File created at: {file_path}")
+
 class SaveFileDialog(FileDialog):
     def select_file_to_save(self, default_name=None):
-        return super().select_file_to_save(default_name)
+        root = tk.Tk()
+        root.withdraw()
+        file_path = filedialog.asksaveasfilename(
+            title="Select a file to save",
+            filetypes=self._format_file_extensions(),
+            initialfile=default_name
+        )
+        if not file_path:
+            raise FileNotFoundError("No file selected.")
+        
+        # Store the selected file type in an attribute
+        self.selected_file_type = self._get_file_type(file_path)
+
+        # Ensure the file path has the correct extension
+        if not file_path.endswith(self.selected_file_type):
+            file_path += self.selected_file_type
+        
+        return file_path, self.selected_file_type
 
 class OpenFileDialog(FileDialog):
     def select_file_to_open(self):
@@ -75,6 +101,7 @@ class DataFrameSaver(FileDialog):
     def save_to_xlsx(self, df, file_path=None, chunk_size=1000):
         if file_path is None:
             file_path = self.default_path
+        self.create_file(file_path)  # Ensure the file is created first
         try:
             standard_width = 17
             ind_width = 8
@@ -123,6 +150,7 @@ class DataFrameSaver(FileDialog):
     def save_to_parquet(self, df, file_path=None, **kwargs):
         if file_path is None:
             file_path = self.default_path
+        self.create_file(file_path)  # Ensure the file is created first
         try:
             df.to_parquet(file_path, **kwargs)
             print(f"DataFrame saved to {file_path} as .parquet")

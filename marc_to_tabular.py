@@ -3,16 +3,9 @@ import pandas as pd
 import pymarc
 import tkinter as tk
 from tkinter import simpledialog
-from file_handling import (
-    select_file_to_open,
-    save_dropped_records,
-    select_folder,
-    extract_field_codes,
-    filter_records,
-    select_file_to_save
-    )
+from file_dialog_classes import OpenFileDialog, SaveFileDialog, DataFrameSaver
 from data_transformation import marc_to_dataframe
-from marctt_classes import DataFrameSaver
+from file_handling import select_folder, extract_field_codes, filter_records, save_dropped_records
 import config
 from datetime import datetime
 
@@ -65,8 +58,12 @@ def create_selection_dialog(fields):
 print("Starting the script...")
 
 try:
+    # Initialize file dialogs
+    open_dialog = OpenFileDialog(["*.mrc"])
+    save_dialog = SaveFileDialog(["*.xlsx", "*.parquet"])
+
     # Select MARC file
-    marc_file_path = select_file_to_open("*.mrc")
+    marc_file_path, _ = open_dialog.select_file_to_open()
     print(f"Selected MARC file: {marc_file_path}")
 
     # Select folder
@@ -109,16 +106,25 @@ try:
 
     # Prepopulate the save dialog with the base name and date-time
     default_name = f"{base_name}_{current_datetime}"
-    file_path = select_file_to_save("*.xlsx", "*.parquet", default_name=default_name)
+    file_path, _ = save_dialog.select_file_to_save(default_name=default_name)
     print(f"Saving DataFrame to {file_path}...")
 
     # Initialize DataFrameSaver and save DataFrame
-    saver = DataFrameSaver()
+    exts_for_df = ["*.xlsx", "*.parquet"]
+    saver = DataFrameSaver(file_extensions=exts_for_df)
     print("File path:", file_path)
+
+    # Ensure the file is created first
+    saver.create_file(file_path)
+
     if file_path.endswith('.xlsx'):
+        print("Saving as .xlsx")
         saver.save_to_xlsx(df, file_path)
     elif file_path.endswith('.parquet'):
+        print("Saving as .parquet")
         saver.save_to_parquet(df, file_path)
+    else:
+        print("Unknown file extension")
 
     print(f"Data saved to {file_path}")
 

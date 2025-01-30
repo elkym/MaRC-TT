@@ -1,92 +1,8 @@
-import os
 from tkinter import Tk, filedialog
 import config
-from datetime import datetime
 import pymarc
+from datetime import datetime
 from general_utils import has_excessive_repeats
-
-def select_file_to_open(*file_extensions):
-    """
-    Opens a file dialog to select a file with the specified extensions for opening.
-
-    Parameters:
-    - file_extensions: Arbitrary number of file extensions to filter by (default is a predefined list).
-
-    Returns:
-    - The path to the selected file, or None if the user aborts.
-    """
-    if not file_extensions:
-        file_extensions = [
-            ("MARC files", "*.mrc"),
-            ("Excel files", "*.xlsx"),
-            ("TSV files", "*.tsv"),
-            ("Text files", "*.txt"),
-            ("Parquet files", "*.parquet"),
-            ("CSV files", "*.csv")
-        ]
-    else:
-        file_extensions = [(f"{ext} files", ext) for ext in file_extensions]
-
-    while True:
-        root = Tk()
-        root.withdraw()  # Hide the root window
-        file_path = filedialog.askopenfilename(
-            title="Select a file to open",
-            filetypes=file_extensions
-        )
-        if file_path:
-            return file_path
-        else:
-            user_input = input("No file selected. Do you want to retry? (y/n): ").strip().lower()
-            if user_input != 'y':
-                print("Aborting the file selection.")
-                return None
-
-def select_file_to_save(*file_extensions, default_name=None):
-    """
-    Opens a file dialog to select a file with the specified extensions for saving.
-
-    Parameters:
-    - file_extensions: Arbitrary number of file extensions to filter by (default is a predefined list).
-    - default_name: Optional default file name for the save dialog.
-
-    Returns:
-    - The path to the selected file, or None if the user aborts.
-    """
-    if not file_extensions:
-        file_extensions = [
-            ("Excel files", "*.xlsx"),
-            ("CSV files", "*.csv"),
-            ("TSV files", "*.tsv"),
-            ("Parquet files", "*.parquet"),
-            ("Text files", "*.txt")
-        ]
-    else:
-        file_extensions = [(f"{ext} files", ext) for ext in file_extensions]
-
-    root = Tk()
-    root.withdraw()  # Hide the root window
-    file_path = filedialog.asksaveasfilename(
-        title="Select a file to save",
-        filetypes=file_extensions,
-        initialfile=default_name
-    )
-    if not file_path:
-        raise FileNotFoundError("No file selected.")
-
-    # Ensure the file path has the correct extension
-    selected_extension = file_path.split('.')[1]
-    print(f"Selected extension: {selected_extension}")
-    print(f"List of valid extensions: {file_extensions}")
-    if selected_extension not in [ext[1:] for _, ext in file_extensions]:
-        user_input = input("No file extension selected. Do you want to retry? (y/n): ").strip().lower()
-        if user_input != 'y':
-            print("Aborting the file selection. Script aborted.")
-            quit()
-        else:
-            return select_file_to_save(*file_extensions, default_name=default_name)
-
-    return file_path
 
 def select_folder():
     if config.USE_DEFAULT_FOLDER:
@@ -112,15 +28,6 @@ def get_last_modified_time(file_path):
     return last_modified_time
 
 def extract_field_codes(marc_file_path):
-    """
-    Extracts field codes from a MARC file.
-
-    Parameters:
-    - marc_file_path: The path to the MARC file.
-
-    Returns:
-    - A list of field codes.
-    """
     field_codes = set()
     with open(marc_file_path, 'rb') as fh:
         records = pymarc.MARCReader(fh)
@@ -131,16 +38,6 @@ def extract_field_codes(marc_file_path):
     return list(field_codes)
 
 def filter_records(marc_file_path, max_repeats):
-    """
-    Filters records based on a maximum repetition limit.
-
-    Parameters:
-    - marc_file_path: The path to the MARC file.
-    - max_repeats: The maximum number of repetitions allowed for a field.
-
-    Returns:
-    - A tuple containing the filtered records and the dropped records' 001 fields.
-    """
     filtered_records = []
     dropped_records_001 = []
     try:
