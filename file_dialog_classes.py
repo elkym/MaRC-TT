@@ -106,9 +106,8 @@ class DataFrameSaver(FileDialog):
             standard_width = 17
             ind_width = 8
 
-            writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
+            writer = pd.ExcelWriter(file_path, engine='xlsxwriter', engine_kwargs={'options': {'strings_to_urls': False}})
             workbook = writer.book
-            workbook.strings_to_urls = False
             worksheet = workbook.add_worksheet()
 
             for col_num, value in enumerate(df.columns.values):
